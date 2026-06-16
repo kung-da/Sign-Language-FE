@@ -1,0 +1,86 @@
+import { Activity, ArrowRight, Camera, Gauge, Sparkles } from "lucide-react";
+import { Button } from "../ui/Button";
+import { GlassCard } from "../ui/GlassCard";
+import { StatusPill } from "../ui/StatusPill";
+
+export function HeroSection() {
+  return (
+    <section id="home" className="section-container grid items-center gap-10 lg:grid-cols-[1.05fr_0.95fr]">
+      <div>
+        <div className="mb-5 inline-flex items-center gap-2 rounded-full border border-cyan/20 bg-cyan/10 px-3 py-1 text-sm text-cyan">
+          <Sparkles size={16} />
+          Academic computer vision frontend demo
+        </div>
+        <h1 className="text-4xl font-black leading-tight text-text sm:text-5xl lg:text-6xl">
+          Real-time Vietnamese Sign Language Translator
+        </h1>
+        <p className="mt-6 max-w-2xl text-lg leading-8 text-muted">
+          A modern dashboard for presenting and simulating a Vietnamese Sign Language recognition pipeline:
+          webcam input, MediaPipe keypoints, temporal encoding, vector search, smoothing, and Vietnamese text output.
+        </p>
+        <div className="mt-8 flex flex-wrap gap-3">
+          <Button icon={<Camera size={18} />} onClick={() => document.querySelector("#demo")?.scrollIntoView()}>
+            Start Recognition
+          </Button>
+          <Button
+            variant="secondary"
+            icon={<ArrowRight size={18} />}
+            onClick={() => document.querySelector("#architecture")?.scrollIntoView()}
+          >
+            View Architecture
+          </Button>
+        </div>
+        <p className="mt-5 text-sm text-muted">
+          Current predictions are mock data only; no real AI inference or external API call is performed.
+        </p>
+      </div>
+      <GlassCard className="overflow-hidden p-4">
+        <div className="relative aspect-[4/3] overflow-hidden rounded-lg bg-slate-950">
+          <div className="absolute inset-x-4 top-4 flex items-center justify-between">
+            <StatusPill status="running" />
+            <span className="rounded-full border border-white/10 bg-white/10 px-3 py-1 text-xs text-muted">Live mock</span>
+          </div>
+          <div className="scan-line" />
+          {Array.from({ length: 14 }).map((_, index) => (
+            <span
+              key={index}
+              className="keypoint-dot"
+              style={{
+                left: `${18 + ((index * 17) % 62)}%`,
+                top: `${24 + ((index * 23) % 52)}%`,
+                animationDelay: `${index * 90}ms`,
+              }}
+            />
+          ))}
+          <div className="absolute bottom-4 left-4 right-4 grid gap-3 rounded-lg border border-white/10 bg-background/75 p-4 backdrop-blur">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs text-muted">Predicted label</p>
+                <p className="text-2xl font-bold text-text">Xin chao</p>
+              </div>
+              <Activity className="text-cyan" />
+            </div>
+            <div className="h-2 rounded-full bg-white/10">
+              <div className="h-full w-[92%] rounded-full bg-gradient-to-r from-cyan to-violet" />
+            </div>
+            <div className="grid grid-cols-3 gap-2 text-sm">
+              <div className="rounded-lg bg-white/5 p-2">
+                <p className="text-muted">Conf.</p>
+                <p className="font-bold">92%</p>
+              </div>
+              <div className="rounded-lg bg-white/5 p-2">
+                <p className="text-muted">FPS</p>
+                <p className="font-bold">30</p>
+              </div>
+              <div className="rounded-lg bg-white/5 p-2">
+                <p className="text-muted">Latency</p>
+                <p className="font-bold">42ms</p>
+              </div>
+            </div>
+          </div>
+          <Gauge className="absolute right-6 top-16 text-blue/80" />
+        </div>
+      </GlassCard>
+    </section>
+  );
+}
