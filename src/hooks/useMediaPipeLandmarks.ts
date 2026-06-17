@@ -10,6 +10,7 @@ import { useEffect, useState, type RefObject } from "react";
 const WASM_ROOT = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.35/wasm";
 const MODEL_ROOT = "https://storage.googleapis.com/mediapipe-models";
 const DETECTION_INTERVAL_MS = 85;
+const INFERENCE_MAX_WIDTH = 480;
 const UI_UPDATE_INTERVAL_MS = 250;
 
 interface LandmarkCounts {
@@ -51,6 +52,11 @@ export function useMediaPipeLandmarks({ videoRef, canvasRef, isActive }: UseMedi
     let lastDetectionMs = 0;
     let lastUiUpdateMs = 0;
     let lastCounts: LandmarkCounts = { hands: 0, face: 0, pose: 0 };
+    const inferenceCanvas = document.createElement("canvas");
+    const inferenceContext = inferenceCanvas.getContext("2d", {
+      alpha: false,
+      desynchronized: true,
+    });
 
     const loadAndRun = async () => {
       try {
@@ -89,6 +95,7 @@ export function useMediaPipeLandmarks({ videoRef, canvasRef, isActive }: UseMedi
             !video ||
             !canvas ||
             !context ||
+            !inferenceContext ||
             !handLandmarker ||
             !faceLandmarker ||
             !poseLandmarker
@@ -110,11 +117,13 @@ export function useMediaPipeLandmarks({ videoRef, canvasRef, isActive }: UseMedi
 
           syncCanvasToVideo(canvas, video);
           context.clearRect(0, 0, canvas.width, canvas.height);
+          syncInferenceCanvas(inferenceCanvas, video);
+          inferenceContext.drawImage(video, 0, 0, inferenceCanvas.width, inferenceCanvas.height);
 
           const timestamp = video.currentTime * 1000;
-          const handResult = handLandmarker.detectForVideo(video, timestamp);
-          const faceResult = faceLandmarker.detectForVideo(video, timestamp);
-          const poseResult = poseLandmarker.detectForVideo(video, timestamp);
+          const handResult = handLandmarker.detectForVideo(inferenceCanvas, timestamp);
+          const faceResult = faceLandmarker.detectForVideo(inferenceCanvas, timestamp);
+          const poseResult = poseLandmarker.detectForVideo(inferenceCanvas, timestamp);
           const drawing = new DrawingUtils(context);
 
           for (const handLandmarks of handResult.landmarks) {
@@ -257,6 +266,14 @@ function hasCountsChanged(previous: LandmarkCounts, next: LandmarkCounts) {
 function syncCanvasToVideo(canvas: HTMLCanvasElement, video: HTMLVideoElement) {
   if (canvas.width !== video.videoWidth) canvas.width = video.videoWidth;
   if (canvas.height !== video.videoHeight) canvas.height = video.videoHeight;
+}
+
+function syncInferenceCanvas(canvas: HTMLCanvasElement, video: HTMLVideoElement) {
+  const width = Math.min(INFERENCE_MAX_WIDTH, video.videoWidth);
+  const height = Math.round(width / (video.videoWidth / video.videoHeight));
+
+  if (canvas.width !== width) canvas.width = width;
+  if (canvas.height !== height) canvas.height = height;
 }
 
 function clearCanvas(canvas: HTMLCanvasElement | null) {
