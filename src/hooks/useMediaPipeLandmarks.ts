@@ -1,14 +1,12 @@
 import {
   DrawingUtils,
   FaceLandmarker,
-  FilesetResolver,
   HandLandmarker,
   PoseLandmarker,
+  type NormalizedLandmark,
 } from "@mediapipe/tasks-vision";
 import { useEffect, useState, type RefObject } from "react";
 
-const WASM_ROOT = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.35/wasm";
-const MODEL_ROOT = "https://storage.googleapis.com/mediapipe-models";
 const DETECTION_INTERVAL_MS = 85;
 const INFERENCE_MAX_WIDTH = 480;
 const UI_UPDATE_INTERVAL_MS = 250;
@@ -19,15 +17,35 @@ interface LandmarkCounts {
   pose: number;
 }
 
+interface WorkerLandmarks {
+  hands: NormalizedLandmark[][];
+  face: NormalizedLandmark[][];
+  pose: NormalizedLandmark[][];
+}
+
 interface UseMediaPipeLandmarksOptions {
   videoRef: RefObject<HTMLVideoElement>;
   canvasRef: RefObject<HTMLCanvasElement>;
   isActive: boolean;
 }
 
+interface VideoFrameMetadata {
+  mediaTime: number;
+}
+
+type VideoFrameCallback = (now: DOMHighResTimeStamp, metadata: VideoFrameMetadata) => void;
+type VideoElementWithFrameCallback = HTMLVideoElement & {
+  requestVideoFrameCallback?: (callback: VideoFrameCallback) => number;
+  cancelVideoFrameCallback?: (handle: number) => void;
+};
+
 type LandmarkStatus = "idle" | "loading" | "ready" | "error";
 type InferenceDelegate = "CPU" | "GPU";
-type VisionFileset = Awaited<ReturnType<typeof FilesetResolver.forVisionTasks>>;
+type LandmarkTask = "hand" | "face" | "pose";
+type WorkerToMainMessage =
+  | { type: "ready"; delegate: InferenceDelegate; task: LandmarkTask }
+  | { type: "result"; landmarks: NormalizedLandmark[][]; task: LandmarkTask }
+  | { type: "error"; message: string; task?: LandmarkTask };
 
 export function useMediaPipeLandmarks({ videoRef, canvasRef, isActive }: UseMediaPipeLandmarksOptions) {
   const [status, setStatus] = useState<LandmarkStatus>("idle");
@@ -45,142 +63,215 @@ export function useMediaPipeLandmarks({ videoRef, canvasRef, isActive }: UseMedi
     }
 
     let isCancelled = false;
-    let animationFrame = 0;
-    let handLandmarker: HandLandmarker | null = null;
-    let faceLandmarker: FaceLandmarker | null = null;
-    let poseLandmarker: PoseLandmarker | null = null;
+    let readyWorkers = 0;
+    let isFrameInFlight = false;
+    let pendingResults = 0;
+    let scheduledFrame = 0;
+    let scheduledWithVideoFrameCallback = false;
     let lastDetectionMs = 0;
     let lastUiUpdateMs = 0;
     let lastCounts: LandmarkCounts = { hands: 0, face: 0, pose: 0 };
+    let drawing: DrawingUtils | null = null;
+    let drawingContext: CanvasRenderingContext2D | null = null;
     const inferenceCanvas = document.createElement("canvas");
     const inferenceContext = inferenceCanvas.getContext("2d", {
       alpha: false,
       desynchronized: true,
     });
+    const workers = createWorkers();
+    const latestLandmarks: WorkerLandmarks = { hands: [], face: [], pose: [] };
 
-    const loadAndRun = async () => {
-      try {
-        setStatus("loading");
-        setError(null);
+    setStatus("loading");
+    setError(null);
 
-        const vision = await FilesetResolver.forVisionTasks(WASM_ROOT);
-        let selectedDelegate: InferenceDelegate = "GPU";
-        let landmarkers = await createLandmarkers(vision, selectedDelegate).catch(() => null);
+    const handleWorkerFailure = (message: string) => {
+      if (isCancelled) return;
+      isFrameInFlight = false;
+      pendingResults = 0;
+      setStatus("error");
+      setError(message);
+    };
 
-        if (!landmarkers) {
-          selectedDelegate = "CPU";
-          landmarkers = await createLandmarkers(vision, selectedDelegate);
-        }
+    for (const [task, worker] of Object.entries(workers) as Array<[LandmarkTask, Worker]>) {
+      worker.onerror = (event) => {
+        handleWorkerFailure(event.message || `MediaPipe ${task} worker crashed while running landmark detection.`);
+      };
 
-        if (isCancelled) {
-          landmarkers.hands.close();
-          landmarkers.face.close();
-          landmarkers.pose.close();
+      worker.onmessageerror = () => {
+        handleWorkerFailure(`MediaPipe ${task} worker could not transfer landmark data.`);
+      };
+
+      worker.onmessage = (event: MessageEvent<WorkerToMainMessage>) => {
+        if (isCancelled) return;
+
+        if (event.data.type === "ready") {
+          readyWorkers += 1;
+          setDelegate(event.data.delegate);
+          if (readyWorkers === 3) setStatus("ready");
           return;
         }
 
-        handLandmarker = landmarkers.hands;
-        faceLandmarker = landmarkers.face;
-        poseLandmarker = landmarkers.pose;
-        setDelegate(selectedDelegate);
-        setStatus("ready");
-
-        const detect = () => {
-          const video = videoRef.current;
-          const canvas = canvasRef.current;
-          const context = canvas?.getContext("2d");
-
-          if (
-            isCancelled ||
-            !video ||
-            !canvas ||
-            !context ||
-            !inferenceContext ||
-            !handLandmarker ||
-            !faceLandmarker ||
-            !poseLandmarker
-          ) {
-            return;
-          }
-
-          if (video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA || !video.videoWidth || !video.videoHeight) {
-            animationFrame = window.requestAnimationFrame(detect);
-            return;
-          }
-
-          const now = performance.now();
-          if (now - lastDetectionMs < DETECTION_INTERVAL_MS) {
-            animationFrame = window.requestAnimationFrame(detect);
-            return;
-          }
-          lastDetectionMs = now;
-
-          syncCanvasToVideo(canvas, video);
-          context.clearRect(0, 0, canvas.width, canvas.height);
-          syncInferenceCanvas(inferenceCanvas, video);
-          inferenceContext.drawImage(video, 0, 0, inferenceCanvas.width, inferenceCanvas.height);
-
-          const timestamp = video.currentTime * 1000;
-          const handResult = handLandmarker.detectForVideo(inferenceCanvas, timestamp);
-          const faceResult = faceLandmarker.detectForVideo(inferenceCanvas, timestamp);
-          const poseResult = poseLandmarker.detectForVideo(inferenceCanvas, timestamp);
-          const drawing = new DrawingUtils(context);
-
-          for (const handLandmarks of handResult.landmarks) {
-            drawing.drawConnectors(handLandmarks, HandLandmarker.HAND_CONNECTIONS, {
-              color: "#22c55e",
-              lineWidth: 3,
-            });
-            drawing.drawLandmarks(handLandmarks, { color: "#ecfeff", fillColor: "#22c55e", radius: 3 });
-          }
-
-          for (const faceLandmarks of faceResult.faceLandmarks) {
-            drawing.drawConnectors(faceLandmarks, FaceLandmarker.FACE_LANDMARKS_CONTOURS, {
-              color: "#38bdf8",
-              lineWidth: 1,
-            });
-          }
-
-          for (const poseLandmarks of poseResult.landmarks) {
-            drawing.drawConnectors(poseLandmarks, PoseLandmarker.POSE_CONNECTIONS, {
-              color: "#fb7185",
-              lineWidth: 3,
-            });
-            drawing.drawLandmarks(poseLandmarks, { color: "#fff7ed", fillColor: "#fb7185", radius: 3 });
-          }
-
-          const nextCounts = {
-            hands: handResult.landmarks.length,
-            face: faceResult.faceLandmarks.length,
-            pose: poseResult.landmarks.length,
-          };
-
-          if (now - lastUiUpdateMs > UI_UPDATE_INTERVAL_MS && hasCountsChanged(lastCounts, nextCounts)) {
-            lastCounts = nextCounts;
-            lastUiUpdateMs = now;
-            setCounts(nextCounts);
-          }
-
-          animationFrame = window.requestAnimationFrame(detect);
-        };
-
-        animationFrame = window.requestAnimationFrame(detect);
-      } catch {
-        if (!isCancelled) {
-          setStatus("error");
-          setError("MediaPipe landmarks could not be loaded. Check your network connection.");
+        if (event.data.type === "error") {
+          handleWorkerFailure(event.data.message);
+          return;
         }
+
+        assignLandmarks(latestLandmarks, event.data.task, event.data.landmarks);
+        pendingResults -= 1;
+
+        if (pendingResults === 0) {
+          isFrameInFlight = false;
+          drawLandmarks(latestLandmarks);
+          updateCounts(latestLandmarks);
+        }
+      };
+
+      worker.postMessage({ type: "init", task });
+    }
+
+    const drawLandmarks = (landmarks: WorkerLandmarks) => {
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+
+      if (!drawingContext) {
+        drawingContext = canvas.getContext("2d", {
+          alpha: true,
+          desynchronized: true,
+        });
+        drawing = drawingContext ? new DrawingUtils(drawingContext) : null;
+      }
+
+      if (!drawingContext || !drawing) return;
+
+      drawingContext.clearRect(0, 0, canvas.width, canvas.height);
+
+      for (const handLandmarks of landmarks.hands) {
+        drawing.drawConnectors(handLandmarks, HandLandmarker.HAND_CONNECTIONS, {
+          color: "#22c55e",
+          lineWidth: 3,
+        });
+        drawing.drawLandmarks(handLandmarks, { color: "#ecfeff", fillColor: "#22c55e", radius: 3 });
+      }
+
+      for (const faceLandmarks of landmarks.face) {
+        drawing.drawConnectors(faceLandmarks, FaceLandmarker.FACE_LANDMARKS_CONTOURS, {
+          color: "#38bdf8",
+          lineWidth: 1,
+        });
+      }
+
+      for (const poseLandmarks of landmarks.pose) {
+        drawing.drawConnectors(poseLandmarks, PoseLandmarker.POSE_CONNECTIONS, {
+          color: "#fb7185",
+          lineWidth: 3,
+        });
+        drawing.drawLandmarks(poseLandmarks, { color: "#fff7ed", fillColor: "#fb7185", radius: 3 });
       }
     };
 
-    void loadAndRun();
+    const updateCounts = (landmarks: WorkerLandmarks) => {
+      const now = performance.now();
+      const nextCounts = {
+        hands: landmarks.hands.length,
+        face: landmarks.face.length,
+        pose: landmarks.pose.length,
+      };
+
+      if (now - lastUiUpdateMs > UI_UPDATE_INTERVAL_MS && hasCountsChanged(lastCounts, nextCounts)) {
+        lastCounts = nextCounts;
+        lastUiUpdateMs = now;
+        setCounts(nextCounts);
+      }
+    };
+
+    const scheduleNextDetection = () => {
+      const video = videoRef.current as VideoElementWithFrameCallback | null;
+
+      if (isCancelled || !video) return;
+
+      if (video.requestVideoFrameCallback) {
+        scheduledWithVideoFrameCallback = true;
+        scheduledFrame = video.requestVideoFrameCallback(detect);
+        return;
+      }
+
+      scheduledWithVideoFrameCallback = false;
+      scheduledFrame = window.requestAnimationFrame((now) => {
+        detect(now, { mediaTime: video.currentTime });
+      });
+    };
+
+    const detect: VideoFrameCallback = (now, metadata) => {
+      const video = videoRef.current;
+      const canvas = canvasRef.current;
+
+      if (!isCancelled) scheduleNextDetection();
+      if (
+        isCancelled ||
+        readyWorkers < 3 ||
+        isFrameInFlight ||
+        !video ||
+        !canvas ||
+        !inferenceContext ||
+        video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA ||
+        !video.videoWidth ||
+        !video.videoHeight
+      ) {
+        return;
+      }
+
+      if (now - lastDetectionMs < DETECTION_INTERVAL_MS) return;
+      lastDetectionMs = now;
+
+      syncCanvasToVideo(canvas, video);
+      syncInferenceCanvas(inferenceCanvas, video);
+      inferenceContext.drawImage(video, 0, 0, inferenceCanvas.width, inferenceCanvas.height);
+      isFrameInFlight = true;
+      pendingResults = 3;
+
+      void Promise.all([
+        createImageBitmap(inferenceCanvas),
+        createImageBitmap(inferenceCanvas),
+        createImageBitmap(inferenceCanvas),
+      ])
+        .then(([handFrame, faceFrame, poseFrame]) => {
+          const frames = { hand: handFrame, face: faceFrame, pose: poseFrame };
+
+          if (isCancelled) {
+            handFrame.close();
+            faceFrame.close();
+            poseFrame.close();
+            return;
+          }
+
+          for (const [task, frame] of Object.entries(frames) as Array<[LandmarkTask, ImageBitmap]>) {
+            workers[task].postMessage(
+              {
+                type: "detect",
+                frame,
+                timestamp: metadata.mediaTime * 1000,
+              },
+              [frame],
+            );
+          }
+        })
+        .catch(() => {
+          isFrameInFlight = false;
+          pendingResults = 0;
+        });
+    };
+
+    scheduleNextDetection();
 
     return () => {
       isCancelled = true;
-      window.cancelAnimationFrame(animationFrame);
-      handLandmarker?.close();
-      faceLandmarker?.close();
-      poseLandmarker?.close();
+      const video = videoRef.current as VideoElementWithFrameCallback | null;
+      if (scheduledWithVideoFrameCallback && video?.cancelVideoFrameCallback) {
+        video.cancelVideoFrameCallback(scheduledFrame);
+      } else {
+        window.cancelAnimationFrame(scheduledFrame);
+      }
+      Object.values(workers).forEach((worker) => worker.terminate());
       clearCanvas(canvasRef.current);
     };
   }, [canvasRef, isActive, videoRef]);
@@ -188,75 +279,24 @@ export function useMediaPipeLandmarks({ videoRef, canvasRef, isActive }: UseMedi
   return { counts, delegate, error, status };
 }
 
-async function createLandmarkers(vision: VisionFileset, delegate: InferenceDelegate) {
-  const canvasOptions =
-    delegate === "GPU"
-      ? {
-          canvas: [createGpuCanvas(), createGpuCanvas(), createGpuCanvas()],
-        }
-      : null;
-  let hands: HandLandmarker | null = null;
-  let face: FaceLandmarker | null = null;
-  let pose: PoseLandmarker | null = null;
-
-  try {
-    hands = await HandLandmarker.createFromOptions(vision, {
-      baseOptions: {
-        delegate,
-        modelAssetPath: `${MODEL_ROOT}/hand_landmarker/hand_landmarker/float16/latest/hand_landmarker.task`,
-      },
-      canvas: canvasOptions?.canvas[0],
-      runningMode: "VIDEO",
-      numHands: 2,
-      minHandDetectionConfidence: 0.5,
-      minHandPresenceConfidence: 0.5,
-      minTrackingConfidence: 0.5,
-    });
-
-    face = await FaceLandmarker.createFromOptions(vision, {
-      baseOptions: {
-        delegate,
-        modelAssetPath: `${MODEL_ROOT}/face_landmarker/face_landmarker/float16/latest/face_landmarker.task`,
-      },
-      canvas: canvasOptions?.canvas[1],
-      runningMode: "VIDEO",
-      numFaces: 1,
-      minFaceDetectionConfidence: 0.5,
-      minFacePresenceConfidence: 0.5,
-      minTrackingConfidence: 0.5,
-      outputFaceBlendshapes: false,
-      outputFacialTransformationMatrixes: false,
-    });
-
-    pose = await PoseLandmarker.createFromOptions(vision, {
-      baseOptions: {
-        delegate,
-        modelAssetPath: `${MODEL_ROOT}/pose_landmarker/pose_landmarker_lite/float16/latest/pose_landmarker_lite.task`,
-      },
-      canvas: canvasOptions?.canvas[2],
-      runningMode: "VIDEO",
-      numPoses: 1,
-      minPoseDetectionConfidence: 0.5,
-      minPosePresenceConfidence: 0.5,
-      minTrackingConfidence: 0.5,
-      outputSegmentationMasks: false,
-    });
-
-    return { face, hands, pose };
-  } catch (error) {
-    hands?.close();
-    face?.close();
-    pose?.close();
-    throw error;
-  }
+function createWorkers() {
+  return {
+    hand: createWorker(),
+    face: createWorker(),
+    pose: createWorker(),
+  };
 }
 
-function createGpuCanvas() {
-  if (typeof OffscreenCanvas !== "undefined") {
-    return new OffscreenCanvas(1, 1);
-  }
+function createWorker() {
+  return new Worker(new URL("../workers/mediaPipeLandmarks.worker.ts", import.meta.url), {
+    type: "module",
+  });
+}
 
-  return document.createElement("canvas");
+function assignLandmarks(landmarks: WorkerLandmarks, task: LandmarkTask, nextLandmarks: NormalizedLandmark[][]) {
+  if (task === "hand") landmarks.hands = nextLandmarks;
+  if (task === "face") landmarks.face = nextLandmarks;
+  if (task === "pose") landmarks.pose = nextLandmarks;
 }
 
 function hasCountsChanged(previous: LandmarkCounts, next: LandmarkCounts) {
