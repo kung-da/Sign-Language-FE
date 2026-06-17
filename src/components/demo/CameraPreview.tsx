@@ -1,19 +1,8 @@
 import { Upload, Video, VideoOff } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { useMediaPipeLandmarks } from "../../hooks/useMediaPipeLandmarks";
 import { Button } from "../ui/Button";
 import { GlassCard } from "../ui/GlassCard";
-
-const dots = [
-  ["28%", "28%"],
-  ["38%", "34%"],
-  ["50%", "30%"],
-  ["58%", "42%"],
-  ["43%", "50%"],
-  ["36%", "62%"],
-  ["55%", "64%"],
-  ["64%", "55%"],
-  ["47%", "73%"],
-];
 
 interface CameraPreviewProps {
   stream: MediaStream | null;
@@ -25,7 +14,18 @@ interface CameraPreviewProps {
 
 export function CameraPreview({ stream, isActive, onStart, onStop, error }: CameraPreviewProps) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [uploadedVideo, setUploadedVideo] = useState<string | null>(null);
+  const {
+    counts,
+    delegate,
+    error: landmarkError,
+    status: landmarkStatus,
+  } = useMediaPipeLandmarks({
+    videoRef,
+    canvasRef,
+    isActive,
+  });
 
   useEffect(() => {
     if (videoRef.current && stream) {
@@ -38,7 +38,7 @@ export function CameraPreview({ stream, isActive, onStart, onStop, error }: Came
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/10 p-4">
         <div>
           <p className="font-semibold text-text">Webcam / Video Input</p>
-          <p className="text-sm text-muted">Local browser demo. No frames are uploaded.</p>
+          <p className="text-sm text-muted">Local MediaPipe landmarks. No frames are uploaded.</p>
         </div>
         <div className="flex flex-wrap gap-2">
           <Button icon={<Video size={18} />} onClick={onStart} disabled={isActive}>
@@ -64,7 +64,28 @@ export function CameraPreview({ stream, isActive, onStart, onStop, error }: Came
       </div>
       <div className="relative aspect-video bg-slate-950">
         {isActive ? (
-          <video ref={videoRef} autoPlay playsInline muted className="h-full w-full object-cover opacity-80" />
+          <>
+            <video
+              ref={videoRef}
+              autoPlay
+              playsInline
+              muted
+              className="h-full w-full scale-x-[-1] object-cover opacity-80"
+            />
+            <canvas
+              ref={canvasRef}
+              className="pointer-events-none absolute inset-0 h-full w-full scale-x-[-1] object-cover"
+            />
+            <div className="absolute left-3 top-3 rounded-md border border-white/10 bg-slate-950/70 px-3 py-2 text-xs font-semibold text-text backdrop-blur">
+              {landmarkStatus === "loading"
+                ? "Loading MediaPipe..."
+                : landmarkStatus === "ready"
+                  ? `${delegate ?? "CPU"} | Hands: ${counts.hands} | Face: ${counts.face} | Pose: ${counts.pose}`
+                  : landmarkStatus === "error"
+                    ? "MediaPipe unavailable"
+                    : "Camera ready"}
+            </div>
+          </>
         ) : uploadedVideo ? (
           <video src={uploadedVideo} controls className="h-full w-full object-cover opacity-80" />
         ) : (
@@ -78,16 +99,19 @@ export function CameraPreview({ stream, isActive, onStart, onStop, error }: Came
                 Start the camera or upload a local video to simulate realtime recognition.
               </p>
               {error && <p className="mt-3 text-sm text-danger">{error}</p>}
+              {landmarkError && <p className="mt-3 text-sm text-danger">{landmarkError}</p>}
             </div>
           </div>
         )}
         {(isActive || uploadedVideo) && (
-          <>
+          <div aria-hidden="true">
             <div className="scan-line" />
-            {dots.map(([left, top], index) => (
-              <span key={`${left}-${top}`} className="keypoint-dot" style={{ left, top, animationDelay: `${index * 80}ms` }} />
-            ))}
-          </>
+          </div>
+        )}
+        {isActive && landmarkError && (
+          <p className="absolute bottom-3 left-3 right-3 rounded-md border border-danger/30 bg-slate-950/80 px-3 py-2 text-sm text-danger">
+            {landmarkError}
+          </p>
         )}
       </div>
     </GlassCard>

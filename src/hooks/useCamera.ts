@@ -14,14 +14,26 @@ export function useCamera() {
   const startCamera = useCallback(async () => {
     try {
       setError(null);
+      streamRef.current?.getTracks().forEach((track) => track.stop());
+
       const nextStream = await navigator.mediaDevices.getUserMedia({
-        video: { width: 1280, height: 720 },
+        video: {
+          width: { ideal: 480 },
+          height: { ideal: 360 },
+          facingMode: "user",
+          frameRate: { ideal: 24, max: 30 },
+        },
         audio: false,
       });
       streamRef.current = nextStream;
       setStream(nextStream);
-    } catch {
-      setError("Camera permission was denied or no camera is available.");
+    } catch (cameraError) {
+      const message =
+        cameraError instanceof DOMException && cameraError.name === "NotAllowedError"
+          ? "Camera permission was denied. Please allow camera access and try again."
+          : "No camera is available. Try another device or browser.";
+
+      setError(message);
     }
   }, []);
 
