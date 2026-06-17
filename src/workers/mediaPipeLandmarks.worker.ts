@@ -26,7 +26,7 @@ interface DetectMessage {
 type MainToWorkerMessage = InitMessage | DetectMessage;
 type WorkerToMainMessage =
   | { type: "ready"; delegate: InferenceDelegate; task: LandmarkTask }
-  | { type: "result"; landmarks: NormalizedLandmark[][]; task: LandmarkTask }
+  | { type: "result"; landmarks: NormalizedLandmark[][]; processingMs: number; task: LandmarkTask }
   | { type: "error"; message: string; task?: LandmarkTask };
 
 let task: LandmarkTask | null = null;
@@ -52,10 +52,14 @@ workerScope.onmessage = (event) => {
   try {
     const timestamp = Math.max(event.data.timestamp, lastTimestamp + 1);
     lastTimestamp = timestamp;
+    const startedAt = performance.now();
+    const landmarks = detectLandmarks(landmarker, task, event.data.frame, timestamp);
+
     workerScope.postMessage({
       type: "result",
       task,
-      landmarks: cloneLandmarks(detectLandmarks(landmarker, task, event.data.frame, timestamp)),
+      landmarks: cloneLandmarks(landmarks),
+      processingMs: performance.now() - startedAt,
     });
   } catch (error) {
     workerScope.postMessage({

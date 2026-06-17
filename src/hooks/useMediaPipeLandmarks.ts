@@ -5,11 +5,12 @@ import {
   PoseLandmarker,
   type NormalizedLandmark,
 } from "@mediapipe/tasks-vision";
-import { useEffect, useState, type RefObject } from "react";
+import { useEffect, useState, type Dispatch, type RefObject, type SetStateAction } from "react";
 
 const DETECTION_INTERVAL_MS = 85;
 const INFERENCE_MAX_WIDTH = 480;
 const UI_UPDATE_INTERVAL_MS = 250;
+const FPS_WINDOW_MS = 1000;
 
 interface LandmarkCounts {
   hands: number;
@@ -21,6 +22,27 @@ interface WorkerLandmarks {
   hands: NormalizedLandmark[][];
   face: NormalizedLandmark[][];
   pose: NormalizedLandmark[][];
+}
+
+export interface PipelinePerformanceMetrics {
+  endToEndLatencyMs: number | null;
+  extractionTimeMs: number | null;
+  fps: number;
+  inferenceSize: {
+    totalBytes: number;
+    items: Array<{ label: string; bytes: number }>;
+  } | null;
+  memory: {
+    usedJSHeapSize: number;
+    totalJSHeapSize: number;
+  } | null;
+  modelInferenceTimeMs: number | null;
+  smoothingWindowSize: number;
+  taskTimesMs: {
+    hand: number | null;
+    face: number | null;
+    pose: number | null;
+  };
 }
 
 interface UseMediaPipeLandmarksOptions {
@@ -44,20 +66,47 @@ type InferenceDelegate = "CPU" | "GPU";
 type LandmarkTask = "hand" | "face" | "pose";
 type WorkerToMainMessage =
   | { type: "ready"; delegate: InferenceDelegate; task: LandmarkTask }
-  | { type: "result"; landmarks: NormalizedLandmark[][]; task: LandmarkTask }
+  | { type: "result"; landmarks: NormalizedLandmark[][]; processingMs: number; task: LandmarkTask }
   | { type: "error"; message: string; task?: LandmarkTask };
+
+type PerformanceWithMemory = Performance & {
+  memory?: {
+    totalJSHeapSize: number;
+    usedJSHeapSize: number;
+  };
+};
+
+const emptyMetrics: PipelinePerformanceMetrics = {
+  endToEndLatencyMs: null,
+  extractionTimeMs: null,
+  fps: 0,
+  inferenceSize: null,
+  memory: null,
+  modelInferenceTimeMs: null,
+  smoothingWindowSize: 5,
+  taskTimesMs: {
+    hand: null,
+    face: null,
+    pose: null,
+  },
+};
 
 export function useMediaPipeLandmarks({ videoRef, canvasRef, isActive }: UseMediaPipeLandmarksOptions) {
   const [status, setStatus] = useState<LandmarkStatus>("idle");
   const [error, setError] = useState<string | null>(null);
   const [counts, setCounts] = useState<LandmarkCounts>({ hands: 0, face: 0, pose: 0 });
   const [delegate, setDelegate] = useState<InferenceDelegate | null>(null);
+  const [metrics, setMetrics] = useState<PipelinePerformanceMetrics>(emptyMetrics);
 
   useEffect(() => {
     if (!isActive) {
       setStatus("idle");
       setDelegate(null);
       setCounts({ hands: 0, face: 0, pose: 0 });
+      setMetrics((currentMetrics) => ({
+        ...emptyMetrics,
+        inferenceSize: currentMetrics.inferenceSize,
+      }));
       clearCanvas(canvasRef.current);
       return;
     }
@@ -71,8 +120,10 @@ export function useMediaPipeLandmarks({ videoRef, canvasRef, isActive }: UseMedi
     let lastDetectionMs = 0;
     let lastUiUpdateMs = 0;
     let lastCounts: LandmarkCounts = { hands: 0, face: 0, pose: 0 };
+    let activeFrameStartedAt = 0;
     let drawing: DrawingUtils | null = null;
     let drawingContext: CanvasRenderingContext2D | null = null;
+    const completedFrameTimes: number[] = [];
     const inferenceCanvas = document.createElement("canvas");
     const inferenceContext = inferenceCanvas.getContext("2d", {
       alpha: false,
@@ -80,9 +131,19 @@ export function useMediaPipeLandmarks({ videoRef, canvasRef, isActive }: UseMedi
     });
     const workers = createWorkers();
     const latestLandmarks: WorkerLandmarks = { hands: [], face: [], pose: [] };
+    const latestTaskTimes: PipelinePerformanceMetrics["taskTimesMs"] = {
+      hand: null,
+      face: null,
+      pose: null,
+    };
 
     setStatus("loading");
     setError(null);
+    void loadModelSizes().then((inferenceSize) => {
+      if (!isCancelled) {
+        setMetrics((currentMetrics) => ({ ...currentMetrics, inferenceSize }));
+      }
+    });
 
     const handleWorkerFailure = (message: string) => {
       if (isCancelled) return;
@@ -117,12 +178,14 @@ export function useMediaPipeLandmarks({ videoRef, canvasRef, isActive }: UseMedi
         }
 
         assignLandmarks(latestLandmarks, event.data.task, event.data.landmarks);
+        latestTaskTimes[event.data.task] = event.data.processingMs;
         pendingResults -= 1;
 
         if (pendingResults === 0) {
           isFrameInFlight = false;
           drawLandmarks(latestLandmarks);
           updateCounts(latestLandmarks);
+          updatePerformanceMetrics(activeFrameStartedAt, latestTaskTimes, completedFrameTimes, setMetrics);
         }
       };
 
@@ -228,6 +291,7 @@ export function useMediaPipeLandmarks({ videoRef, canvasRef, isActive }: UseMedi
       inferenceContext.drawImage(video, 0, 0, inferenceCanvas.width, inferenceCanvas.height);
       isFrameInFlight = true;
       pendingResults = 3;
+      activeFrameStartedAt = performance.now();
 
       void Promise.all([
         createImageBitmap(inferenceCanvas),
@@ -276,7 +340,7 @@ export function useMediaPipeLandmarks({ videoRef, canvasRef, isActive }: UseMedi
     };
   }, [canvasRef, isActive, videoRef]);
 
-  return { counts, delegate, error, status };
+  return { counts, delegate, error, metrics, status };
 }
 
 function createWorkers() {
@@ -297,6 +361,35 @@ function assignLandmarks(landmarks: WorkerLandmarks, task: LandmarkTask, nextLan
   if (task === "hand") landmarks.hands = nextLandmarks;
   if (task === "face") landmarks.face = nextLandmarks;
   if (task === "pose") landmarks.pose = nextLandmarks;
+}
+
+function updatePerformanceMetrics(
+  frameStartedAt: number,
+  taskTimesMs: PipelinePerformanceMetrics["taskTimesMs"],
+  completedFrameTimes: number[],
+  setMetrics: Dispatch<SetStateAction<PipelinePerformanceMetrics>>,
+) {
+  const now = performance.now();
+  const extractionTimeMs = Math.max(taskTimesMs.hand ?? 0, taskTimesMs.face ?? 0, taskTimesMs.pose ?? 0);
+  const cutoff = now - FPS_WINDOW_MS;
+  completedFrameTimes.push(now);
+
+  while (completedFrameTimes.length && completedFrameTimes[0] < cutoff) {
+    completedFrameTimes.shift();
+  }
+
+  setMetrics((currentMetrics) => ({
+    ...currentMetrics,
+    endToEndLatencyMs: Math.round(now - frameStartedAt),
+    extractionTimeMs: Math.round(extractionTimeMs),
+    fps: completedFrameTimes.length,
+    memory: getMemorySnapshot(),
+    taskTimesMs: {
+      hand: roundNullable(taskTimesMs.hand),
+      face: roundNullable(taskTimesMs.face),
+      pose: roundNullable(taskTimesMs.pose),
+    },
+  }));
 }
 
 function hasCountsChanged(previous: LandmarkCounts, next: LandmarkCounts) {
@@ -320,4 +413,44 @@ function clearCanvas(canvas: HTMLCanvasElement | null) {
   const context = canvas?.getContext("2d");
   if (!canvas || !context) return;
   context.clearRect(0, 0, canvas.width, canvas.height);
+}
+
+async function loadModelSizes() {
+  const items = await Promise.all([
+    getAssetSize("Hand landmarker", "/mediapipe/models/hand_landmarker.task"),
+    getAssetSize("Face landmarker", "/mediapipe/models/face_landmarker.task"),
+    getAssetSize("Pose landmarker lite", "/mediapipe/models/pose_landmarker_lite.task"),
+  ]);
+
+  return {
+    items,
+    totalBytes: items.reduce((total, item) => total + item.bytes, 0),
+  };
+}
+
+async function getAssetSize(label: string, url: string) {
+  const response = await fetch(url, { method: "HEAD" });
+  const contentLength = response.headers.get("content-length");
+
+  if (contentLength) {
+    return { label, bytes: Number(contentLength) };
+  }
+
+  const fallbackResponse = await fetch(url);
+  const blob = await fallbackResponse.blob();
+  return { label, bytes: blob.size };
+}
+
+function getMemorySnapshot() {
+  const memory = (performance as PerformanceWithMemory).memory;
+  if (!memory) return null;
+
+  return {
+    totalJSHeapSize: memory.totalJSHeapSize,
+    usedJSHeapSize: memory.usedJSHeapSize,
+  };
+}
+
+function roundNullable(value: number | null) {
+  return value === null ? null : Math.round(value);
 }

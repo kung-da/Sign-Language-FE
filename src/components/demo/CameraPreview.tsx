@@ -1,6 +1,7 @@
 import { Upload, Video, VideoOff } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useMediaPipeLandmarks } from "../../hooks/useMediaPipeLandmarks";
+import { PerformancePanel } from "./PerformancePanel";
 import { Button } from "../ui/Button";
 import { GlassCard } from "../ui/GlassCard";
 
@@ -20,6 +21,7 @@ export function CameraPreview({ stream, isActive, onStart, onStop, error }: Came
     counts,
     delegate,
     error: landmarkError,
+    metrics,
     status: landmarkStatus,
   } = useMediaPipeLandmarks({
     videoRef,
@@ -34,7 +36,8 @@ export function CameraPreview({ stream, isActive, onStart, onStop, error }: Came
   }, [stream]);
 
   return (
-    <GlassCard className="overflow-hidden">
+    <div className="space-y-4">
+      <GlassCard className="overflow-hidden">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/10 p-4">
         <div>
           <p className="font-semibold text-text">Webcam / Video Input</p>
@@ -114,6 +117,8 @@ export function CameraPreview({ stream, isActive, onStart, onStop, error }: Came
           </p>
         )}
       </div>
-    </GlassCard>
+      </GlassCard>
+      <PerformancePanel metrics={metrics} />
+    </div>
   );
 }
