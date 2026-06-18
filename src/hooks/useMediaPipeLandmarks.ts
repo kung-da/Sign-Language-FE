@@ -7,7 +7,7 @@ import {
 } from "@mediapipe/tasks-vision";
 import { useEffect, useState, type Dispatch, type RefObject, type SetStateAction } from "react";
 
-const DETECTION_INTERVAL_MS = 85;
+const DETECTION_INTERVAL_MS = 16;
 const INFERENCE_MAX_WIDTH = 480;
 const UI_UPDATE_INTERVAL_MS = 250;
 const FPS_WINDOW_MS = 1000;

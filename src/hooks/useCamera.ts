@@ -21,7 +21,7 @@ export function useCamera() {
           width: { ideal: 1280 },
           height: { ideal: 720 },
           facingMode: "user",
-          frameRate: { ideal: 30, max: 30 },
+          frameRate: { ideal: 60, max: 60 },
         },
         audio: false,
       });
