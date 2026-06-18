@@ -18,7 +18,7 @@ interface LandmarkCounts {
   pose: number;
 }
 
-interface WorkerLandmarks {
+export interface WorkerLandmarks {
   hands: NormalizedLandmark[][];
   face: NormalizedLandmark[][];
   pose: NormalizedLandmark[][];
@@ -49,6 +49,7 @@ interface UseMediaPipeLandmarksOptions {
   videoRef: RefObject<HTMLVideoElement>;
   canvasRef: RefObject<HTMLCanvasElement>;
   isActive: boolean;
+  onLandmarks?: (landmarks: WorkerLandmarks) => void;
 }
 
 interface VideoFrameMetadata {
@@ -91,7 +92,7 @@ const emptyMetrics: PipelinePerformanceMetrics = {
   },
 };
 
-export function useMediaPipeLandmarks({ videoRef, canvasRef, isActive }: UseMediaPipeLandmarksOptions) {
+export function useMediaPipeLandmarks({ videoRef, canvasRef, isActive, onLandmarks }: UseMediaPipeLandmarksOptions) {
   const [status, setStatus] = useState<LandmarkStatus>("idle");
   const [error, setError] = useState<string | null>(null);
   const [counts, setCounts] = useState<LandmarkCounts>({ hands: 0, face: 0, pose: 0 });
@@ -186,6 +187,11 @@ export function useMediaPipeLandmarks({ videoRef, canvasRef, isActive }: UseMedi
           drawLandmarks(latestLandmarks);
           updateCounts(latestLandmarks);
           updatePerformanceMetrics(activeFrameStartedAt, latestTaskTimes, completedFrameTimes, setMetrics);
+          onLandmarks?.({
+            hands: [...latestLandmarks.hands],
+            face: [...latestLandmarks.face],
+            pose: [...latestLandmarks.pose],
+          });
         }
       };
 

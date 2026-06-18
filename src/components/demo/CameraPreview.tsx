@@ -1,6 +1,6 @@
 import { Upload, Video, VideoOff } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { useMediaPipeLandmarks } from "../../hooks/useMediaPipeLandmarks";
+import { useMediaPipeLandmarks, type WorkerLandmarks } from "../../hooks/useMediaPipeLandmarks";
 import { PerformancePanel } from "./PerformancePanel";
 import { Button } from "../ui/Button";
 import { GlassCard } from "../ui/GlassCard";
@@ -11,9 +11,12 @@ interface CameraPreviewProps {
   onStart: () => void;
   onStop: () => void;
   error?: string | null;
+  onLandmarks?: (landmarks: WorkerLandmarks) => void;
+  bufferProgress?: number;
+  bufferTotal?: number;
 }
 
-export function CameraPreview({ stream, isActive, onStart, onStop, error }: CameraPreviewProps) {
+export function CameraPreview({ stream, isActive, onStart, onStop, error, onLandmarks, bufferProgress = 0, bufferTotal = 60 }: CameraPreviewProps) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [uploadedVideo, setUploadedVideo] = useState<string | null>(null);
@@ -27,6 +30,7 @@ export function CameraPreview({ stream, isActive, onStart, onStop, error }: Came
     videoRef,
     canvasRef,
     isActive,
+    onLandmarks,
   });
 
   useEffect(() => {
@@ -34,6 +38,8 @@ export function CameraPreview({ stream, isActive, onStart, onStop, error }: Came
       videoRef.current.srcObject = stream;
     }
   }, [stream]);
+
+  const bufferPercent = bufferTotal > 0 ? Math.round((bufferProgress / bufferTotal) * 100) : 0;
 
   return (
     <div className="space-y-4">
@@ -88,6 +94,20 @@ export function CameraPreview({ stream, isActive, onStart, onStop, error }: Came
                     ? "MediaPipe unavailable"
                     : "Camera ready"}
             </div>
+            {isActive && landmarkStatus === "ready" && (
+              <div className="absolute bottom-3 left-3 right-3 rounded-md border border-white/10 bg-slate-950/70 px-3 py-2 backdrop-blur">
+                <div className="flex items-center justify-between text-xs text-muted">
+                  <span>Buffer: {bufferProgress}/{bufferTotal} frames</span>
+                  <span>{bufferPercent}%</span>
+                </div>
+                <div className="mt-1 h-1.5 rounded-full bg-white/10">
+                  <div
+                    className="h-full rounded-full bg-gradient-to-r from-cyan to-violet transition-all duration-150"
+                    style={{ width: `${bufferPercent}%` }}
+                  />
+                </div>
+              </div>
+            )}
           </>
         ) : uploadedVideo ? (
           <video src={uploadedVideo} controls className="h-full w-full object-cover opacity-80" />
@@ -99,7 +119,7 @@ export function CameraPreview({ stream, isActive, onStart, onStop, error }: Came
               </div>
               <p className="font-semibold text-text">Camera preview is idle</p>
               <p className="mt-2 max-w-md text-sm text-muted">
-                Start the camera or upload a local video to simulate realtime recognition.
+                Start the camera or upload a local video to begin realtime recognition.
               </p>
               {error && <p className="mt-3 text-sm text-danger">{error}</p>}
               {landmarkError && <p className="mt-3 text-sm text-danger">{landmarkError}</p>}

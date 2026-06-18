@@ -42,8 +42,8 @@ export function PerformancePanel({ metrics }: PerformancePanelProps) {
         <div className="rounded-md border border-white/10 bg-white/[0.04] p-3">
           <p className="text-sm font-semibold text-text">Smoothing / voting readiness</p>
           <p className="mt-2 text-sm text-muted">
-            Recommended majority vote window: {metrics.smoothingWindowSize} predictions. Real evaluation starts when
-            the sign classifier replaces mock predictions.
+            Recommended majority vote window: {metrics.smoothingWindowSize} predictions. Evaluation starts when
+            the sign classifier is running.
           </p>
         </div>
       </div>

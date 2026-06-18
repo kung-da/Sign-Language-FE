@@ -8,3 +8,9 @@ vite.config.d.ts
 .env
 .env.local
 .tmp-chrome-test/
+.asl_tcn_base/
+__pycache__/
+*.pyc
+backend/.venv/
+backend/.matplotlib/
+backend/*.log

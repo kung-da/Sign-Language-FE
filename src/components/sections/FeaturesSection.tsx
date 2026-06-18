@@ -9,7 +9,7 @@ export function FeaturesSection() {
       <SectionHeading
         eyebrow="Features"
         title="Built for a convincing technical demo"
-        description="The interface highlights what exists today as mock frontend behavior and what can become real with backend integration."
+        description="The interface showcases the complete recognition pipeline from webcam input through MediaPipe keypoint extraction to TCN model prediction."
       />
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
         {features.map((feature) => (

@@ -45,7 +45,7 @@ export function PredictionPanel({ prediction, isLoading, onAddSign }: Prediction
           <TopPredictions predictions={prediction.topPredictions.slice(0, 3)} />
         ) : (
           <p className="rounded-lg border border-white/10 bg-white/5 p-4 text-sm text-muted">
-            Mock predictions will appear every 2-3 seconds while recognition is running.
+            Predictions will appear after 60 frames are buffered (~2 seconds).
           </p>
         )}
       </div>

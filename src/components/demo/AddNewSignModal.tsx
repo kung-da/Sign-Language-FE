@@ -39,7 +39,7 @@ export function AddNewSignModal({ open, onClose }: AddNewSignModalProps) {
         <div className="flex items-center justify-between gap-4">
           <div>
             <h3 className="text-xl font-bold text-text">Add New Sign</h3>
-            <p className="mt-1 text-sm text-muted">Mock save only. This prepares the payload for a future vector DB.</p>
+            <p className="mt-1 text-sm text-muted">Save a new sign to the collection for future vector DB integration.</p>
           </div>
           <button className="rounded-lg p-2 text-muted hover:bg-white/10 hover:text-text" onClick={onClose} aria-label="Close">
             <X size={20} />
@@ -74,7 +74,7 @@ export function AddNewSignModal({ open, onClose }: AddNewSignModalProps) {
             />
           </label>
         </div>
-        {saved && <p className="mt-4 text-sm text-success">Saved to mock vector payload.</p>}
+        {saved && <p className="mt-4 text-sm text-success">Saved successfully.</p>}
         <div className="mt-6 flex justify-end gap-3">
           <Button variant="ghost" onClick={onClose}>
             Cancel

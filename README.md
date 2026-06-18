@@ -134,3 +134,28 @@ Pipeline FPS              = completed_predictions / elapsed_seconds
 - Nếu thấy `MediaPipe unavailable`, hãy restart dev server sau khi đổi `vite.config.ts`.
 - Nếu trình duyệt đã cache server cũ, đổi port hoặc hard refresh.
 - Fake camera trong Chrome có thể trả `Hands: 0 | Face: 0 | Pose: 0`; điều này vẫn xác nhận MediaPipe đã load và chạy.
+
+## Backend Model Test
+
+Đã bổ sung FastAPI backend để test model trong `asl_tcn_baseline`:
+
+- `asl_tcn_baseline/best.pt`: checkpoint TCN.
+- `asl_tcn_baseline/config.json`: cấu hình model, `seq_len=60`, `input_dim=634`, `num_classes=2000`.
+- `asl_tcn_baseline/history.json`: lịch sử train/validation.
+- `asl_tcn_baseline/latency.json`: latency benchmark đã lưu.
+
+Source backend nằm trong `backend/app`:
+
+- `GET /health`: kiểm tra checkpoint và PyTorch.
+- `GET /model/metadata`: đọc config, history summary, latency và kích thước checkpoint.
+- `POST /model/predict`: nhận keypoints shape `[60, 634]` hoặc `[batch, 60, 634]`, trả top-k class.
+- `POST /model/benchmark`: đo latency inference model trên input synthetic.
+
+Chạy backend:
+
+```bash
+cd backend
+python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
+```
+
+Lưu ý: venv hiện tại đang dùng Python 3.14 và chưa có PyTorch, nên predict sẽ trả HTTP 503 cho đến khi tạo backend env Python 3.11/3.12 và cài `torch`.

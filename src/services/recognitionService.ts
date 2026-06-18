@@ -1,4 +1,4 @@
-import { mockPredictions } from "../data/mockPredictions";
+import { apiClient } from "./apiClient";
 import type { PredictionResult } from "../types/recognition";
 
 export interface RecognizeFrameRequest {
@@ -6,34 +6,34 @@ export interface RecognizeFrameRequest {
   sequenceId: string;
 }
 
-const jitter = (value: number, range: number) => {
-  const next = value + (Math.random() - 0.5) * range;
-  return Number(Math.max(0, Math.min(1, next)).toFixed(2));
-};
-
 export const recognitionService = {
-  async recognizeFrame(_request: RecognizeFrameRequest): Promise<PredictionResult> {
-    return this.getPrediction();
-  },
+  async predictFromSequence(
+    sequence: number[][],
+    topK = 5,
+  ): Promise<PredictionResult> {
+    const response = await apiClient.postPredict(sequence, topK);
+    const row = response.top_k[0] ?? [];
 
-  async getPrediction(): Promise<PredictionResult> {
-    const sample = mockPredictions[Math.floor(Math.random() * mockPredictions.length)];
-    const confidence = jitter(sample.confidence, 0.14);
-    const status = confidence < 0.5 ? "unknown" : "running";
+    const best = row[0];
+    const confidence = best?.probability ?? 0;
+    const label = best?.label ?? "Unknown";
+    const status = confidence < 0.3 ? "unknown" : "running";
 
     return {
-      ...sample,
+      label,
+      text: label,
       confidence,
       status,
+      topPredictions: row.slice(0, 3).map((item) => ({
+        label: item.label,
+        gloss: `class ${item.class_index}`,
+        confidence: item.probability,
+      })),
       stats: {
-        fps: Math.round(24 + Math.random() * 8),
-        latencyMs: Math.round(34 + Math.random() * 32),
+        fps: 0,
+        latencyMs: Math.round(response.model_inference_ms),
         modelStatus: status,
       },
-      topPredictions: sample.topPredictions.map((item, index) => ({
-        ...item,
-        confidence: index === 0 ? confidence : jitter(item.confidence, 0.08),
-      })),
       updatedAt: new Date().toISOString(),
     };
   },
