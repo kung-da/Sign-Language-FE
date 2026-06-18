@@ -75,7 +75,7 @@ workerScope.onmessage = (event) => {
 async function init(nextTask: LandmarkTask) {
   try {
     task = nextTask;
-    const selectedDelegate: InferenceDelegate = "CPU";
+    const selectedDelegate: InferenceDelegate = "GPU";
     landmarker = await createLandmarker(nextTask, selectedDelegate);
     workerScope.postMessage({ type: "ready", delegate: selectedDelegate, task: nextTask });
   } catch (error) {
