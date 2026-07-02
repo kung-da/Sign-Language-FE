@@ -1,5 +1,6 @@
 import { Upload, Video, VideoOff } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import type { CameraSettings } from "../../hooks/useCamera";
 import { useMediaPipeLandmarks, type WorkerLandmarks } from "../../hooks/useMediaPipeLandmarks";
 import { PerformancePanel } from "./PerformancePanel";
 import { Button } from "../ui/Button";
@@ -7,6 +8,7 @@ import { GlassCard } from "../ui/GlassCard";
 
 interface CameraPreviewProps {
   stream: MediaStream | null;
+  cameraSettings: CameraSettings | null;
   isActive: boolean;
   onStart: () => void;
   onStop: () => void;
@@ -16,7 +18,7 @@ interface CameraPreviewProps {
   bufferTotal?: number;
 }
 
-export function CameraPreview({ stream, isActive, onStart, onStop, error, onLandmarks, bufferProgress = 0, bufferTotal = 60 }: CameraPreviewProps) {
+export function CameraPreview({ stream, cameraSettings, isActive, onStart, onStop, error, onLandmarks, bufferProgress = 0, bufferTotal = 60 }: CameraPreviewProps) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [uploadedVideo, setUploadedVideo] = useState<string | null>(null);
@@ -138,7 +140,7 @@ export function CameraPreview({ stream, isActive, onStart, onStop, error, onLand
         )}
       </div>
       </GlassCard>
-      <PerformancePanel metrics={metrics} />
+      <PerformancePanel metrics={metrics} delegate={delegate} cameraSettings={cameraSettings} />
     </div>
   );
 }

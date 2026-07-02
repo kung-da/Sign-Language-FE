@@ -7,7 +7,7 @@ import { useCamera } from "../../hooks/useCamera";
 import { useRealtimeRecognition } from "../../hooks/useRealtimeRecognition";
 
 export function DemoSection() {
-  const { stream, isCameraActive, startCamera, stopCamera, error } = useCamera();
+  const { stream, settings, isCameraActive, startCamera, stopCamera, error } = useCamera();
   const { prediction, isLoading, bufferProgress, bufferTotal, onLandmarks } =
     useRealtimeRecognition(isCameraActive);
   const [modalOpen, setModalOpen] = useState(false);
@@ -22,6 +22,7 @@ export function DemoSection() {
       <div className="grid gap-6 lg:grid-cols-[1.35fr_0.65fr]">
         <CameraPreview
           stream={stream}
+          cameraSettings={settings}
           isActive={isCameraActive}
           onStart={startCamera}
           onStop={stopCamera}

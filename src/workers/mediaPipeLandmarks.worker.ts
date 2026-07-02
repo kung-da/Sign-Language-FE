@@ -3,7 +3,6 @@ import {
   FilesetResolver,
   HandLandmarker,
   PoseLandmarker,
-  type NormalizedLandmark,
 } from "@mediapipe/tasks-vision";
 
 const WASM_ROOT = import.meta.env.DEV ? "/mediapipe-dev-wasm" : "/mediapipe/wasm";
@@ -11,6 +10,14 @@ const MODEL_ROOT = "/mediapipe/models";
 
 type InferenceDelegate = "CPU" | "GPU";
 type LandmarkTask = "hand" | "face" | "pose";
+type LandmarkLike = {
+  x: number;
+  y: number;
+  z: number;
+  visibility: number;
+  presence?: number;
+};
+type HandednessLabel = "Left" | "Right" | null;
 
 interface InitMessage {
   type: "init";
@@ -26,7 +33,15 @@ interface DetectMessage {
 type MainToWorkerMessage = InitMessage | DetectMessage;
 type WorkerToMainMessage =
   | { type: "ready"; delegate: InferenceDelegate; task: LandmarkTask }
-  | { type: "result"; landmarks: NormalizedLandmark[][]; processingMs: number; task: LandmarkTask }
+  | {
+      type: "result";
+      blendshapes?: number[];
+      handedness?: HandednessLabel[];
+      landmarks: LandmarkLike[][];
+      processingMs: number;
+      task: LandmarkTask;
+      worldLandmarks?: LandmarkLike[][];
+    }
   | { type: "error"; message: string; task?: LandmarkTask };
 
 let task: LandmarkTask | null = null;
@@ -53,12 +68,15 @@ workerScope.onmessage = (event) => {
     const timestamp = Math.max(event.data.timestamp, lastTimestamp + 1);
     lastTimestamp = timestamp;
     const startedAt = performance.now();
-    const landmarks = detectLandmarks(landmarker, task, event.data.frame, timestamp);
+    const result = detectLandmarks(landmarker, task, event.data.frame, timestamp);
 
     workerScope.postMessage({
       type: "result",
       task,
-      landmarks: cloneLandmarks(landmarks),
+      landmarks: cloneLandmarks(result.landmarks),
+      worldLandmarks: result.worldLandmarks ? cloneLandmarks(result.worldLandmarks) : undefined,
+      handedness: result.handedness,
+      blendshapes: result.blendshapes,
       processingMs: performance.now() - startedAt,
     });
   } catch (error) {
@@ -75,8 +93,13 @@ workerScope.onmessage = (event) => {
 async function init(nextTask: LandmarkTask) {
   try {
     task = nextTask;
-    const selectedDelegate: InferenceDelegate = "GPU";
-    landmarker = await createLandmarker(nextTask, selectedDelegate);
+    let selectedDelegate: InferenceDelegate = "GPU";
+    try {
+      landmarker = await createLandmarker(nextTask, selectedDelegate);
+    } catch {
+      selectedDelegate = "CPU";
+      landmarker = await createLandmarker(nextTask, selectedDelegate);
+    }
     workerScope.postMessage({ type: "ready", delegate: selectedDelegate, task: nextTask });
   } catch (error) {
     workerScope.postMessage({
@@ -115,7 +138,7 @@ async function createLandmarker(nextTask: LandmarkTask, delegate: InferenceDeleg
       minFaceDetectionConfidence: 0.5,
       minFacePresenceConfidence: 0.5,
       minTrackingConfidence: 0.5,
-      outputFaceBlendshapes: false,
+      outputFaceBlendshapes: true,
       outputFacialTransformationMatrixes: false,
     });
   }
@@ -141,25 +164,49 @@ function detectLandmarks(
   timestamp: number,
 ) {
   if (nextTask === "hand") {
-    return (nextLandmarker as HandLandmarker).detectForVideo(frame, timestamp).landmarks;
+    const result = (nextLandmarker as HandLandmarker).detectForVideo(frame, timestamp);
+    return {
+      handedness: result.handedness.map((item) => getHandednessLabel(item)),
+      landmarks: result.landmarks,
+      worldLandmarks: result.worldLandmarks,
+    };
   }
 
   if (nextTask === "face") {
-    return (nextLandmarker as FaceLandmarker).detectForVideo(frame, timestamp).faceLandmarks;
+    const result = (nextLandmarker as FaceLandmarker).detectForVideo(frame, timestamp);
+    return {
+      blendshapes: cloneBlendshapes(result.faceBlendshapes),
+      landmarks: result.faceLandmarks,
+    };
   }
 
-  return (nextLandmarker as PoseLandmarker).detectForVideo(frame, timestamp).landmarks;
+  const result = (nextLandmarker as PoseLandmarker).detectForVideo(frame, timestamp);
+  return {
+    landmarks: result.landmarks,
+    worldLandmarks: result.worldLandmarks,
+  };
 }
 
-function cloneLandmarks(landmarks: NormalizedLandmark[][]) {
+function cloneLandmarks(landmarks: LandmarkLike[][]) {
   return landmarks.map((landmarkGroup) =>
     landmarkGroup.map((landmark) => ({
       x: landmark.x,
       y: landmark.y,
       z: landmark.z,
-      visibility: landmark.visibility,
+      visibility: landmark.visibility ?? 0,
+      presence: landmark.presence,
     })),
   );
+}
+
+function cloneBlendshapes(faceBlendshapes: Array<{ categories: Array<{ score: number }> }>) {
+  return faceBlendshapes[0]?.categories.map((category) => category.score) ?? [];
+}
+
+function getHandednessLabel(handedness: Array<{ categoryName?: string; category_name?: string }>): HandednessLabel {
+  const label = handedness[0]?.categoryName ?? handedness[0]?.category_name;
+  if (label === "Left" || label === "Right") return label;
+  return null;
 }
 
 function getErrorMessage(error: unknown) {

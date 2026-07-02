@@ -1,11 +1,14 @@
 import type { PipelinePerformanceMetrics } from "../../hooks/useMediaPipeLandmarks";
+import type { CameraSettings } from "../../hooks/useCamera";
 import { GlassCard } from "../ui/GlassCard";
 
 interface PerformancePanelProps {
   metrics: PipelinePerformanceMetrics;
+  delegate: "CPU" | "GPU" | "Mixed" | null;
+  cameraSettings: CameraSettings | null;
 }
 
-export function PerformancePanel({ metrics }: PerformancePanelProps) {
+export function PerformancePanel({ metrics, delegate, cameraSettings }: PerformancePanelProps) {
   return (
     <GlassCard className="p-4">
       <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
@@ -23,10 +26,11 @@ export function PerformancePanel({ metrics }: PerformancePanelProps) {
         <Metric label="Model inference" value={formatMs(metrics.modelInferenceTimeMs)} note="Waiting for real sign model" />
         <Metric label="End-to-end latency" value={formatMs(metrics.endToEndLatencyMs)} note="Frame capture to landmark overlay" />
         <Metric label="Pipeline FPS" value={metrics.fps ? `${metrics.fps} fps` : "Waiting"} note="Completed landmark frames/sec" />
+        <Metric label="Camera FPS" value={metrics.cameraFps ? `${metrics.cameraFps} fps` : "Waiting"} note={formatCameraSettings(cameraSettings)} />
         <Metric label="Model size" value={formatBytes(metrics.inferenceSize?.totalBytes ?? null)} note="Local MediaPipe task assets" />
         <Metric label="JS heap RAM" value={formatMemory(metrics.memory)} note="Available in Chromium browsers" />
-        <Metric label="CPU usage" value="Not available" note="Use DevTools or Task Manager" />
-        <Metric label="GPU usage" value="Not available" note="Use browser/GPU profiler" />
+        <Metric label="Pipeline busy time" value={formatPipelineLoad(metrics)} note="Estimate; not system-wide CPU usage" />
+        <Metric label="GPU acceleration" value={formatDelegate(delegate)} note="MediaPipe delegate, not system-wide GPU usage" />
       </div>
 
       <div className="mt-4 grid gap-3 lg:grid-cols-2">
@@ -96,4 +100,23 @@ function formatBytes(value: number | null) {
 function formatMemory(memory: PipelinePerformanceMetrics["memory"]) {
   if (!memory) return "Not available";
   return `${formatBytes(memory.usedJSHeapSize)} / ${formatBytes(memory.totalJSHeapSize)}`;
+}
+
+function formatPipelineLoad(metrics: PipelinePerformanceMetrics) {
+  if (metrics.endToEndLatencyMs === null || metrics.fps === 0) return "Waiting";
+  return `${Math.min(100, Math.round((metrics.endToEndLatencyMs * metrics.fps) / 10))}%`;
+}
+
+function formatDelegate(delegate: PerformancePanelProps["delegate"]) {
+  if (!delegate) return "Waiting";
+  if (delegate === "GPU") return "Active";
+  if (delegate === "Mixed") return "Partial";
+  return "CPU fallback";
+}
+
+function formatCameraSettings(settings: CameraSettings | null) {
+  if (!settings) return "Actual frames delivered by the camera";
+  const resolution = settings.width && settings.height ? `${settings.width}x${settings.height}` : "Resolution unknown";
+  const configuredFps = settings.frameRate ? `; track reports ${Math.round(settings.frameRate)} fps` : "";
+  return `${resolution}${configuredFps}`;
 }

@@ -3,13 +3,19 @@ import {
   FaceLandmarker,
   HandLandmarker,
   PoseLandmarker,
-  type NormalizedLandmark,
 } from "@mediapipe/tasks-vision";
 import { useEffect, useState, type Dispatch, type RefObject, type SetStateAction } from "react";
+import {
+  extractFrameFeatures,
+  handPreviewToLandmarks,
+  preprocessFrameFeatures,
+  type FrameFeatures,
+} from "../utils/landmarkPreprocessing";
 
 const TARGET_DETECTION_FPS = 60;
 const DETECTION_INTERVAL_MS = 1000 / TARGET_DETECTION_FPS;
 const INFERENCE_MAX_WIDTH = 480;
+const PREVIEW_INTERPOLATION_FRAMES = 60;
 const UI_UPDATE_INTERVAL_MS = 250;
 const FPS_WINDOW_MS = 1000;
 
@@ -19,13 +25,27 @@ interface LandmarkCounts {
   pose: number;
 }
 
+export type LandmarkLike = {
+  x: number;
+  y: number;
+  z: number;
+  visibility: number;
+  presence?: number;
+};
+export type HandednessLabel = "Left" | "Right" | null;
+
 export interface WorkerLandmarks {
-  hands: NormalizedLandmark[][];
-  face: NormalizedLandmark[][];
-  pose: NormalizedLandmark[][];
+  face: LandmarkLike[][];
+  faceBlendshapes: number[];
+  handedness: HandednessLabel[];
+  hands: LandmarkLike[][];
+  handWorldLandmarks: LandmarkLike[][];
+  pose: LandmarkLike[][];
+  poseWorldLandmarks: LandmarkLike[][];
 }
 
 export interface PipelinePerformanceMetrics {
+  cameraFps: number;
   endToEndLatencyMs: number | null;
   extractionTimeMs: number | null;
   fps: number;
@@ -65,10 +85,19 @@ type VideoElementWithFrameCallback = HTMLVideoElement & {
 
 type LandmarkStatus = "idle" | "loading" | "ready" | "error";
 type InferenceDelegate = "CPU" | "GPU";
+type DisplayDelegate = InferenceDelegate | "Mixed";
 type LandmarkTask = "hand" | "face" | "pose";
 type WorkerToMainMessage =
   | { type: "ready"; delegate: InferenceDelegate; task: LandmarkTask }
-  | { type: "result"; landmarks: NormalizedLandmark[][]; processingMs: number; task: LandmarkTask }
+  | {
+      type: "result";
+      blendshapes?: number[];
+      handedness?: HandednessLabel[];
+      landmarks: LandmarkLike[][];
+      processingMs: number;
+      task: LandmarkTask;
+      worldLandmarks?: LandmarkLike[][];
+    }
   | { type: "error"; message: string; task?: LandmarkTask };
 
 type PerformanceWithMemory = Performance & {
@@ -79,6 +108,7 @@ type PerformanceWithMemory = Performance & {
 };
 
 const emptyMetrics: PipelinePerformanceMetrics = {
+  cameraFps: 0,
   endToEndLatencyMs: null,
   extractionTimeMs: null,
   fps: 0,
@@ -97,7 +127,7 @@ export function useMediaPipeLandmarks({ videoRef, canvasRef, isActive, onLandmar
   const [status, setStatus] = useState<LandmarkStatus>("idle");
   const [error, setError] = useState<string | null>(null);
   const [counts, setCounts] = useState<LandmarkCounts>({ hands: 0, face: 0, pose: 0 });
-  const [delegate, setDelegate] = useState<InferenceDelegate | null>(null);
+  const [delegate, setDelegate] = useState<DisplayDelegate | null>(null);
   const [metrics, setMetrics] = useState<PipelinePerformanceMetrics>(emptyMetrics);
 
   useEffect(() => {
@@ -121,18 +151,31 @@ export function useMediaPipeLandmarks({ videoRef, canvasRef, isActive, onLandmar
     let scheduledWithVideoFrameCallback = false;
     let lastDetectionMs = 0;
     let lastUiUpdateMs = 0;
+    let lastMetricsUpdateMs = 0;
+    let lastCameraMediaTime = -1;
     let lastCounts: LandmarkCounts = { hands: 0, face: 0, pose: 0 };
     let activeFrameStartedAt = 0;
     let drawing: DrawingUtils | null = null;
     let drawingContext: CanvasRenderingContext2D | null = null;
     const completedFrameTimes: number[] = [];
+    const cameraFrameTimes: number[] = [];
+    const previewFrameBuffer: FrameFeatures[] = [];
+    const workerDelegates: Partial<Record<LandmarkTask, InferenceDelegate>> = {};
     const inferenceCanvas = document.createElement("canvas");
     const inferenceContext = inferenceCanvas.getContext("2d", {
       alpha: false,
       desynchronized: true,
     });
     const workers = createWorkers();
-    const latestLandmarks: WorkerLandmarks = { hands: [], face: [], pose: [] };
+    const latestLandmarks: WorkerLandmarks = {
+      face: [],
+      faceBlendshapes: [],
+      handedness: [],
+      hands: [],
+      handWorldLandmarks: [],
+      pose: [],
+      poseWorldLandmarks: [],
+    };
     const latestTaskTimes: PipelinePerformanceMetrics["taskTimesMs"] = {
       hand: null,
       face: null,
@@ -169,8 +212,12 @@ export function useMediaPipeLandmarks({ videoRef, canvasRef, isActive, onLandmar
 
         if (event.data.type === "ready") {
           readyWorkers += 1;
-          setDelegate(event.data.delegate);
-          if (readyWorkers === 3) setStatus("ready");
+          workerDelegates[event.data.task] = event.data.delegate;
+          if (readyWorkers === 3) {
+            const delegates = Object.values(workerDelegates);
+            setDelegate(delegates.every((value) => value === "GPU") ? "GPU" : delegates.every((value) => value === "CPU") ? "CPU" : "Mixed");
+            setStatus("ready");
+          }
           return;
         }
 
@@ -179,19 +226,30 @@ export function useMediaPipeLandmarks({ videoRef, canvasRef, isActive, onLandmar
           return;
         }
 
-        assignLandmarks(latestLandmarks, event.data.task, event.data.landmarks);
+        assignLandmarks(latestLandmarks, event.data.task, event.data.landmarks, event.data);
         latestTaskTimes[event.data.task] = event.data.processingMs;
         pendingResults -= 1;
 
         if (pendingResults === 0) {
           isFrameInFlight = false;
-          drawLandmarks(latestLandmarks);
-          updateCounts(latestLandmarks);
-          updatePerformanceMetrics(activeFrameStartedAt, latestTaskTimes, completedFrameTimes, setMetrics);
+          const displayLandmarks = buildDisplayLandmarks(latestLandmarks, previewFrameBuffer);
+          drawLandmarks(displayLandmarks);
+          updateCounts(displayLandmarks);
+          const completedAt = performance.now();
+          completedFrameTimes.push(completedAt);
+          trimFpsWindow(completedFrameTimes, completedAt);
+          if (completedAt - lastMetricsUpdateMs >= UI_UPDATE_INTERVAL_MS) {
+            lastMetricsUpdateMs = completedAt;
+            updatePerformanceMetrics(activeFrameStartedAt, latestTaskTimes, completedFrameTimes, cameraFrameTimes, setMetrics);
+          }
           onLandmarks?.({
-            hands: [...latestLandmarks.hands],
             face: [...latestLandmarks.face],
+            faceBlendshapes: [...latestLandmarks.faceBlendshapes],
+            handedness: [...latestLandmarks.handedness],
+            hands: [...latestLandmarks.hands],
+            handWorldLandmarks: [...latestLandmarks.handWorldLandmarks],
             pose: [...latestLandmarks.pose],
+            poseWorldLandmarks: [...latestLandmarks.poseWorldLandmarks],
           });
         }
       };
@@ -276,6 +334,11 @@ export function useMediaPipeLandmarks({ videoRef, canvasRef, isActive, onLandmar
       const canvas = canvasRef.current;
 
       if (!isCancelled) scheduleNextDetection();
+      if (metadata.mediaTime !== lastCameraMediaTime) {
+        lastCameraMediaTime = metadata.mediaTime;
+        cameraFrameTimes.push(now);
+        trimFpsWindow(cameraFrameTimes, now);
+      }
       if (
         isCancelled ||
         readyWorkers < 3 ||
@@ -290,7 +353,9 @@ export function useMediaPipeLandmarks({ videoRef, canvasRef, isActive, onLandmar
         return;
       }
 
-      if (now - lastDetectionMs < DETECTION_INTERVAL_MS) return;
+      // requestVideoFrameCallback already fires once per decoded camera frame.
+      // Applying a second 16.67 ms gate can turn a jittery 60 FPS stream into ~30 FPS.
+      if (!scheduledWithVideoFrameCallback && now - lastDetectionMs < DETECTION_INTERVAL_MS) return;
       lastDetectionMs = now;
 
       syncCanvasToVideo(canvas, video);
@@ -364,29 +429,47 @@ function createWorker() {
   });
 }
 
-function assignLandmarks(landmarks: WorkerLandmarks, task: LandmarkTask, nextLandmarks: NormalizedLandmark[][]) {
-  if (task === "hand") landmarks.hands = nextLandmarks;
-  if (task === "face") landmarks.face = nextLandmarks;
-  if (task === "pose") landmarks.pose = nextLandmarks;
+function assignLandmarks(landmarks: WorkerLandmarks, task: LandmarkTask, nextLandmarks: LandmarkLike[][], message: Extract<WorkerToMainMessage, { type: "result" }>) {
+  if (task === "hand") {
+    landmarks.hands = nextLandmarks;
+    landmarks.handWorldLandmarks = message.worldLandmarks ?? [];
+    landmarks.handedness = message.handedness ?? [];
+  }
+  if (task === "face") {
+    landmarks.face = nextLandmarks;
+    landmarks.faceBlendshapes = message.blendshapes ?? [];
+  }
+  if (task === "pose") {
+    landmarks.pose = nextLandmarks;
+    landmarks.poseWorldLandmarks = message.worldLandmarks ?? [];
+  }
+}
+
+function buildDisplayLandmarks(landmarks: WorkerLandmarks, previewFrameBuffer: FrameFeatures[]): WorkerLandmarks {
+  previewFrameBuffer.push(extractFrameFeatures(landmarks));
+  while (previewFrameBuffer.length > PREVIEW_INTERPOLATION_FRAMES) previewFrameBuffer.shift();
+
+  const currentIndex = previewFrameBuffer.length - 1;
+  const preprocessed = preprocessFrameFeatures(previewFrameBuffer);
+
+  return {
+    ...landmarks,
+    hands: handPreviewToLandmarks(preprocessed.previewHands[currentIndex] ?? [], preprocessed.validMask[currentIndex] ?? []),
+  };
 }
 
 function updatePerformanceMetrics(
   frameStartedAt: number,
   taskTimesMs: PipelinePerformanceMetrics["taskTimesMs"],
   completedFrameTimes: number[],
+  cameraFrameTimes: number[],
   setMetrics: Dispatch<SetStateAction<PipelinePerformanceMetrics>>,
 ) {
   const now = performance.now();
   const extractionTimeMs = Math.max(taskTimesMs.hand ?? 0, taskTimesMs.face ?? 0, taskTimesMs.pose ?? 0);
-  const cutoff = now - FPS_WINDOW_MS;
-  completedFrameTimes.push(now);
-
-  while (completedFrameTimes.length && completedFrameTimes[0] < cutoff) {
-    completedFrameTimes.shift();
-  }
-
   setMetrics((currentMetrics) => ({
     ...currentMetrics,
+    cameraFps: cameraFrameTimes.length,
     endToEndLatencyMs: Math.round(now - frameStartedAt),
     extractionTimeMs: Math.round(extractionTimeMs),
     fps: completedFrameTimes.length,
@@ -397,6 +480,11 @@ function updatePerformanceMetrics(
       pose: roundNullable(taskTimesMs.pose),
     },
   }));
+}
+
+function trimFpsWindow(frameTimes: number[], now: number) {
+  const cutoff = now - FPS_WINDOW_MS;
+  while (frameTimes.length && frameTimes[0] < cutoff) frameTimes.shift();
 }
 
 function hasCountsChanged(previous: LandmarkCounts, next: LandmarkCounts) {
