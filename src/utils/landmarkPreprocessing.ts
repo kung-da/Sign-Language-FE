@@ -5,15 +5,21 @@ const EPSILON = 1e-6;
 const POSE_LANDMARK_COUNT = 33;
 const HAND_LANDMARK_COUNT = 21;
 const FACE_BLENDSHAPE_COUNT = 52;
+const MOUTH_LANDMARK_INDICES = [0, 17, 61, 291, 39, 269, 13, 14, 78, 308, 81, 311];
+const MOUTH_LEFT_CORNER_LOCAL = MOUTH_LANDMARK_INDICES.indexOf(61);
+const MOUTH_RIGHT_CORNER_LOCAL = MOUTH_LANDMARK_INDICES.indexOf(291);
+const MOUTH_LANDMARK_COUNT = MOUTH_LANDMARK_INDICES.length;
 
 const POSE_VALUES_PER_LANDMARK = 5;
 const HAND_VALUES_PER_LANDMARK = 3;
+const MOUTH_VALUES_PER_LANDMARK = 3;
 const POSE_NORM_DIM = POSE_LANDMARK_COUNT * POSE_VALUES_PER_LANDMARK;
 const POSE_WORLD_DIM = POSE_LANDMARK_COUNT * POSE_VALUES_PER_LANDMARK;
 const POSE_FEATURE_DIM = POSE_NORM_DIM + POSE_WORLD_DIM;
 const HAND_BLOCK_DIM = HAND_LANDMARK_COUNT * HAND_VALUES_PER_LANDMARK;
 const HANDS_FEATURE_DIM = HAND_BLOCK_DIM * 4;
-export const LANDMARK_FEATURE_DIM = POSE_FEATURE_DIM + HANDS_FEATURE_DIM + FACE_BLENDSHAPE_COUNT;
+const MOUTH_FEATURE_DIM = MOUTH_LANDMARK_COUNT * MOUTH_VALUES_PER_LANDMARK;
+export const LANDMARK_FEATURE_DIM = POSE_FEATURE_DIM + HANDS_FEATURE_DIM + FACE_BLENDSHAPE_COUNT + MOUTH_FEATURE_DIM;
 
 const LEFT_HAND_NORM_START = 0;
 const RIGHT_HAND_NORM_START = HAND_BLOCK_DIM;
@@ -29,6 +35,7 @@ const INTERPOLATE_EDGE_MISSING_HANDS = false;
 export interface FrameFeatures {
   face: number[];
   hands: number[];
+  mouth: number[];
   pose: number[];
   validMask: number[];
 }
@@ -38,11 +45,13 @@ export function extractFrameFeatures(landmarks: WorkerLandmarks): FrameFeatures 
   const poseWorld = poseToVector(landmarks.poseWorldLandmarks[0]);
   const { hands, validLeftHand, validRightHand } = extractHandsFeatures(landmarks);
   const face = faceBlendshapesToVector(landmarks.faceBlendshapes);
+  const mouth = mouthLandmarksToVector(landmarks.face[0]);
   const hasFace = landmarks.face.length > 0 || face.some((value) => Math.abs(value) > EPSILON);
 
   return {
     face,
     hands,
+    mouth,
     pose: [...poseNorm, ...poseWorld],
     validMask: [landmarks.pose.length > 0 ? 1 : 0, validLeftHand, validRightHand, hasFace ? 1 : 0],
   };
@@ -56,15 +65,17 @@ export function preprocessFrameFeatures(frames: FrameFeatures[]) {
   const pose = frames.map((frame) => frame.pose.slice());
   const hands = frames.map((frame) => frame.hands.slice());
   const face = frames.map((frame) => frame.face.slice());
+  const mouth = frames.map((frame) => frame.mouth.slice());
   const validMask = frames.map((frame) => frame.validMask.slice());
   const { hands: stableHands, validMask: stableValidMask } = stabilizeSingleHandSides(hands, validMask);
   const { processedHands, previewHands } = preprocessHandsSequence(stableHands, stableValidMask);
   const processedPose = normalizePoseSequence(pose);
+  const processedMouth = normalizeMouthSequence(mouth);
 
   return {
     previewHands,
     sequence: frames.map((_, index) => {
-      const row = [...processedPose[index], ...processedHands[index], ...face[index]];
+      const row = [...processedPose[index], ...processedHands[index], ...face[index], ...processedMouth[index]];
       if (row.length !== LANDMARK_FEATURE_DIM) {
         return row.length > LANDMARK_FEATURE_DIM ? row.slice(0, LANDMARK_FEATURE_DIM) : [...row, ...createZeroArray(LANDMARK_FEATURE_DIM - row.length)];
       }
@@ -157,6 +168,23 @@ function faceBlendshapesToVector(blendshapes: number[]) {
   for (let index = 0; index < Math.min(blendshapes.length, FACE_BLENDSHAPE_COUNT); index += 1) {
     vector[index] = blendshapes[index] ?? 0;
   }
+  return vector;
+}
+
+function mouthLandmarksToVector(landmarks?: LandmarkLike[]) {
+  const vector = createZeroArray(MOUTH_FEATURE_DIM);
+  if (!landmarks) return vector;
+
+  for (let outputIndex = 0; outputIndex < MOUTH_LANDMARK_COUNT; outputIndex += 1) {
+    const landmark = landmarks[MOUTH_LANDMARK_INDICES[outputIndex]];
+    if (!landmark) continue;
+
+    const base = outputIndex * MOUTH_VALUES_PER_LANDMARK;
+    vector[base] = landmark.x;
+    vector[base + 1] = landmark.y;
+    vector[base + 2] = landmark.z;
+  }
+
   return vector;
 }
 
@@ -274,6 +302,32 @@ function normalizeHandBlock(block: number[]) {
     output[base] -= wrist[0];
     output[base + 1] -= wrist[1];
     output[base + 2] -= wrist[2];
+  }
+
+  return output;
+}
+
+function normalizeMouthSequence(mouth: number[][]) {
+  return mouth.map((frame) => normalizeMouthBlock(frame));
+}
+
+function normalizeMouthBlock(block: number[]) {
+  if (!hasNonZeroValues(block)) return block.slice();
+
+  const output = block.slice();
+  const points = landmarkBlockToPoints(output, MOUTH_LANDMARK_COUNT, MOUTH_VALUES_PER_LANDMARK);
+  const leftCorner = points[MOUTH_LEFT_CORNER_LOCAL];
+  const rightCorner = points[MOUTH_RIGHT_CORNER_LOCAL];
+  const center = midpoint(leftCorner, rightCorner);
+  const scale = distance(leftCorner, rightCorner);
+
+  if (scale <= EPSILON) return output;
+
+  for (let index = 0; index < MOUTH_LANDMARK_COUNT; index += 1) {
+    const base = index * MOUTH_VALUES_PER_LANDMARK;
+    output[base] = (output[base] - center[0]) / scale;
+    output[base + 1] = (output[base + 1] - center[1]) / scale;
+    output[base + 2] = (output[base + 2] - center[2]) / scale;
   }
 
   return output;
