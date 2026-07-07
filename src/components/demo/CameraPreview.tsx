@@ -1,5 +1,5 @@
-import { Upload, Video, VideoOff } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { Maximize, Minimize, Upload, Video, VideoOff } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { CameraSettings } from "../../hooks/useCamera";
 import { useMediaPipeLandmarks, type WorkerLandmarks } from "../../hooks/useMediaPipeLandmarks";
 import { PerformancePanel } from "./PerformancePanel";
@@ -14,14 +14,34 @@ interface CameraPreviewProps {
   onStop: () => void;
   error?: string | null;
   onLandmarks?: (landmarks: WorkerLandmarks) => void;
-  bufferProgress?: number;
-  bufferTotal?: number;
 }
 
-export function CameraPreview({ stream, cameraSettings, isActive, onStart, onStop, error, onLandmarks, bufferProgress = 0, bufferTotal = 60 }: CameraPreviewProps) {
+export function CameraPreview({ stream, cameraSettings, isActive, onStart, onStop, error, onLandmarks }: CameraPreviewProps) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const containerRef = useRef<HTMLDivElement | null>(null);
   const [uploadedVideo, setUploadedVideo] = useState<string | null>(null);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+
+  // Keep state in sync when user exits fullscreen via Escape key
+  useEffect(() => {
+    const handleChange = () => setIsFullscreen(!!document.fullscreenElement);
+    document.addEventListener("fullscreenchange", handleChange);
+    return () => document.removeEventListener("fullscreenchange", handleChange);
+  }, []);
+
+  const toggleFullscreen = useCallback(async () => {
+    if (!containerRef.current) return;
+    try {
+      if (!document.fullscreenElement) {
+        await containerRef.current.requestFullscreen();
+      } else {
+        await document.exitFullscreen();
+      }
+    } catch (err) {
+      console.warn("Fullscreen not supported", err);
+    }
+  }, []);
   const {
     counts,
     delegate,
@@ -41,7 +61,7 @@ export function CameraPreview({ stream, cameraSettings, isActive, onStart, onSto
     }
   }, [stream]);
 
-  const bufferPercent = bufferTotal > 0 ? Math.round((bufferProgress / bufferTotal) * 100) : 0;
+
 
   return (
     <div className="space-y-4">
@@ -73,7 +93,7 @@ export function CameraPreview({ stream, cameraSettings, isActive, onStart, onSto
           </Button>
         </div>
       </div>
-      <div className="relative aspect-video bg-slate-950">
+      <div ref={containerRef} className={`relative bg-slate-950 ${isFullscreen ? "flex items-center justify-center h-screen" : "aspect-video"}`}>
         {isActive ? (
           <>
             <video
@@ -96,20 +116,14 @@ export function CameraPreview({ stream, cameraSettings, isActive, onStart, onSto
                     ? "MediaPipe unavailable"
                     : "Camera ready"}
             </div>
-            {isActive && landmarkStatus === "ready" && (
-              <div className="absolute bottom-3 left-3 right-3 rounded-md border border-white/10 bg-slate-950/70 px-3 py-2 backdrop-blur">
-                <div className="flex items-center justify-between text-xs text-muted">
-                  <span>Buffer: {bufferProgress}/{bufferTotal} frames</span>
-                  <span>{bufferPercent}%</span>
-                </div>
-                <div className="mt-1 h-1.5 rounded-full bg-white/10">
-                  <div
-                    className="h-full rounded-full bg-gradient-to-r from-cyan to-violet transition-all duration-150"
-                    style={{ width: `${bufferPercent}%` }}
-                  />
-                </div>
-              </div>
-            )}
+            <button
+              onClick={toggleFullscreen}
+              className="absolute right-3 top-3 grid h-9 w-9 place-items-center rounded-md border border-white/10 bg-slate-950/70 text-text backdrop-blur transition hover:bg-white/20"
+              title={isFullscreen ? "Exit fullscreen" : "Fullscreen"}
+            >
+              {isFullscreen ? <Minimize size={18} /> : <Maximize size={18} />}
+            </button>
+
           </>
         ) : uploadedVideo ? (
           <video src={uploadedVideo} controls className="h-full w-full object-cover opacity-80" />

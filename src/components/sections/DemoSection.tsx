@@ -17,7 +17,7 @@ export function DemoSection() {
       <SectionHeading
         eyebrow="Realtime Demo"
         title="Webcam recognition workspace"
-        description="Turn on the camera to extract MediaPipe keypoints, buffer 60 frames, and run baseline TCN inference via the backend API."
+        description="Turn on the camera to extract MediaPipe keypoints and run baseline TCN inference via the backend API."
       />
       <div className="grid gap-6 lg:grid-cols-[1.35fr_0.65fr]">
         <CameraPreview
@@ -28,8 +28,6 @@ export function DemoSection() {
           onStop={stopCamera}
           error={error}
           onLandmarks={onLandmarks}
-          bufferProgress={bufferProgress}
-          bufferTotal={bufferTotal}
         />
         <PredictionPanel prediction={prediction} isLoading={isLoading} onAddSign={() => setModalOpen(true)} />
       </div>
