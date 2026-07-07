@@ -3,7 +3,7 @@ import {
   HandLandmarker,
   PoseLandmarker,
 } from "@mediapipe/tasks-vision";
-import { useEffect, useState, type Dispatch, type RefObject, type SetStateAction } from "react";
+import { useEffect, useRef, useState, type Dispatch, type RefObject, type SetStateAction } from "react";
 import {
   extractFrameFeatures,
   type FrameFeatures,
@@ -126,6 +126,11 @@ export function useMediaPipeLandmarks({ videoRef, canvasRef, isActive, onLandmar
   const [counts, setCounts] = useState<LandmarkCounts>({ hands: 0, face: 0, pose: 0 });
   const [delegate, setDelegate] = useState<DisplayDelegate | null>(null);
   const [metrics, setMetrics] = useState<PipelinePerformanceMetrics>(emptyMetrics);
+  const onLandmarksRef = useRef(onLandmarks);
+
+  useEffect(() => {
+    onLandmarksRef.current = onLandmarks;
+  }, [onLandmarks]);
 
   useEffect(() => {
     if (!isActive) {
@@ -239,7 +244,7 @@ export function useMediaPipeLandmarks({ videoRef, canvasRef, isActive, onLandmar
             lastMetricsUpdateMs = completedAt;
             updatePerformanceMetrics(activeFrameStartedAt, latestTaskTimes, completedFrameTimes, cameraFrameTimes, setMetrics);
           }
-          onLandmarks?.({
+          onLandmarksRef.current?.({
             face: [...latestLandmarks.face],
             faceBlendshapes: [...latestLandmarks.faceBlendshapes],
             handedness: [...latestLandmarks.handedness],

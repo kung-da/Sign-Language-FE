@@ -5,6 +5,7 @@ import { useLandmarkBuffer } from "./useLandmarkBuffer";
 import type { WorkerLandmarks } from "./useMediaPipeLandmarks";
 
 const SEQ_LEN = 60;
+const BACKEND_RETRY_COOLDOWN_MS = 5000;
 
 export function useRealtimeRecognition(isRunning: boolean) {
   const [prediction, setPrediction] = useState<PredictionResult | null>(null);
@@ -12,6 +13,7 @@ export function useRealtimeRecognition(isRunning: boolean) {
   const [bufferProgress, setBufferProgress] = useState(0);
   const { addFrame, isReady, getSequence, reset, getProgress } = useLandmarkBuffer();
   const inferringRef = useRef(false);
+  const retryAfterRef = useRef(0);
 
   // Reset when recognition stops
   useEffect(() => {
@@ -21,12 +23,14 @@ export function useRealtimeRecognition(isRunning: boolean) {
       setPrediction(null);
       setIsLoading(false);
       inferringRef.current = false;
+      retryAfterRef.current = 0;
     }
   }, [isRunning, reset]);
 
   const onLandmarks = useCallback(
     (landmarks: WorkerLandmarks) => {
       if (!isRunning || inferringRef.current) return;
+      if (Date.now() < retryAfterRef.current) return;
 
       addFrame(landmarks);
       setBufferProgress(getProgress());
@@ -46,6 +50,9 @@ export function useRealtimeRecognition(isRunning: boolean) {
           })
           .catch((error) => {
             console.error("Prediction failed:", error);
+            retryAfterRef.current = Date.now() + BACKEND_RETRY_COOLDOWN_MS;
+            reset();
+            setBufferProgress(0);
             setPrediction({
               label: "Error",
               text: "Backend unavailable",

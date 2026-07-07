@@ -7,14 +7,17 @@ import { RealtimeStats } from "./RealtimeStats";
 import { TopPredictions } from "./TopPredictions";
 
 interface PredictionPanelProps {
+  bufferProgress: number;
+  bufferTotal: number;
   prediction: PredictionResult | null;
   isLoading: boolean;
   onAddSign: () => void;
 }
 
-export function PredictionPanel({ prediction, isLoading, onAddSign }: PredictionPanelProps) {
+export function PredictionPanel({ bufferProgress, bufferTotal, prediction, isLoading, onAddSign }: PredictionPanelProps) {
   const confidence = prediction ? Math.round(prediction.confidence * 100) : 0;
   const showAdd = prediction?.status === "unknown" || (prediction?.confidence ?? 1) < 0.55;
+  const bufferPercent = Math.round((bufferProgress / Math.max(bufferTotal, 1)) * 100);
 
   return (
     <GlassCard className="p-5">
@@ -40,6 +43,20 @@ export function PredictionPanel({ prediction, isLoading, onAddSign }: Prediction
         </div>
       </div>
       <div className="mt-6">
+        <div className="mb-4">
+          <div className="mb-2 flex items-center justify-between text-sm">
+            <span className="text-muted">Frame buffer</span>
+            <span className="font-semibold text-text">
+              {bufferProgress}/{bufferTotal}
+            </span>
+          </div>
+          <div className="h-2 rounded-full bg-white/10">
+            <div
+              className="h-full rounded-full bg-cyan transition-all duration-300"
+              style={{ width: `${bufferPercent}%` }}
+            />
+          </div>
+        </div>
         <p className="mb-3 text-sm font-semibold text-text">Top 3 predictions</p>
         {prediction ? (
           <TopPredictions predictions={prediction.topPredictions.slice(0, 3)} />

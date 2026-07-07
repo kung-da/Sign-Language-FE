@@ -8,8 +8,9 @@ import { useRealtimeRecognition } from "../../hooks/useRealtimeRecognition";
 
 export function DemoSection() {
   const { stream, settings, isCameraActive, startCamera, stopCamera, error } = useCamera();
+  const [isVideoActive, setIsVideoActive] = useState(false);
   const { prediction, isLoading, bufferProgress, bufferTotal, onLandmarks } =
-    useRealtimeRecognition(isCameraActive);
+    useRealtimeRecognition(isVideoActive);
   const [modalOpen, setModalOpen] = useState(false);
 
   return (
@@ -28,8 +29,15 @@ export function DemoSection() {
           onStop={stopCamera}
           error={error}
           onLandmarks={onLandmarks}
+          onVideoActiveChange={setIsVideoActive}
         />
-        <PredictionPanel prediction={prediction} isLoading={isLoading} onAddSign={() => setModalOpen(true)} />
+        <PredictionPanel
+          bufferProgress={bufferProgress}
+          bufferTotal={bufferTotal}
+          prediction={prediction}
+          isLoading={isLoading}
+          onAddSign={() => setModalOpen(true)}
+        />
       </div>
       <AddNewSignModal open={modalOpen} onClose={() => setModalOpen(false)} />
     </section>
