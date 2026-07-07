@@ -1,0 +1,33 @@
+{
+  "feature_set": "pose_hands",
+  "epochs": 94,
+  "model_path": "D:\\Data\\Learning\\BDML\\train\\demo\\models\\v2\\final_trainval_model.pt",
+  "source_best_config": "D:\\Data\\Learning\\BDML\\train\\output_v4\\world\\with_z\\pose_hands\\best_config.json",
+  "source_algorithm": "feature_set_tune_runner_v4.py world/with_z pose_hands + all-split final training",
+  "train_splits": [
+    "train",
+    "val",
+    "test"
+  ],
+  "train_num_samples": 1160,
+  "split_sizes": {
+    "train": 871,
+    "val": 153,
+    "test": 136
+  },
+  "heldout_test_available": false,
+  "test_metrics": null,
+  "final_train_metrics_last_epoch": {
+    "epoch": 94,
+    "lr": 0.0,
+    "train_acc": 0.9974137931034482,
+    "train_macro_f1": 0.9974538289396027,
+    "train_weighted_f1": 0.9973748511773524,
+    "train_balanced_acc": 0.9971833721833723,
+    "train_loss": 0.004457915079747808,
+    "train_top1_acc": 0.9974137931034482,
+    "epoch_seconds": 1.5802345275878906
+  },
+  "total_seconds": 133.16931200027466,
+  "note": "Trained on train+validation+test. Test split was included in training; no held-out test metric is reported."
+}
