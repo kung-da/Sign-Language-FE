@@ -1,161 +1,211 @@
-# VSL AI Translator Frontend
+# Sign Language FE
 
-Frontend demo cho hệ thống nhận diện Ngôn ngữ Ký hiệu Việt Nam theo thời gian thực. Ứng dụng dùng React, Vite, Tailwind CSS và MediaPipe Tasks Vision để hiển thị camera, vẽ landmark tay/khuôn mặt/tư thế trực tiếp trên trình duyệt, đồng thời mô phỏng kết quả nhận diện bằng dữ liệu mock.
+React/Vite frontend + FastAPI backend for testing sign-language recognition with MediaPipe landmarks and the local `v2` PyTorch model.
 
-## Tính Năng Chính
+## Current Model
 
-- Bật webcam và hiển thị preview 1280x720.
-- Chạy MediaPipe hand, face và pose landmark trên browser.
-- Tách inference MediaPipe sang 3 Web Worker riêng để giảm nghẽn main thread.
-- Dùng model và wasm local trong `public/mediapipe`, hạn chế phụ thuộc mạng khi chạy camera.
-- Overlay landmark trực tiếp lên canvas.
-- Panel đo hiệu năng pipeline khi chạy webcam.
-- Panel mock prediction, confidence, top predictions, FPS và latency.
-- Modal thêm ký hiệu mới, hiện đang lưu mock payload.
-- Các section trình bày pipeline, architecture, metrics, features và social impact.
+- Checkpoint: `backend/models/v2/final_trainval_model.pt`
+- Config: `backend/models/v2/config.json`
+- Input shape: `[60, 291]` or `[batch, 60, 291]`
+- Features: world pose + world hands only
+- Face and mouth features are not used by the v2 model
 
-## Công Nghệ
+Feature dimension:
 
-- React 18 + TypeScript
-- Vite
-- Tailwind CSS
-- Framer Motion
-- Lucide React
-- `@mediapipe/tasks-vision`
+```text
+pose world: 33 landmarks * 5 values = 165
+hands world: 2 hands * 21 landmarks * 3 values = 126
+total = 291
+```
 
-## Cài Đặt
+## Requirements
 
-```bash
+- Node.js 18+ and npm
+- Python 3.11 or 3.12 recommended
+- Python packages from `backend/requirements.txt`
+- A webcam or a local video file for testing
+
+PyTorch wheels may not be available for every Python version. If `torch` does not install or the backend reports that PyTorch is missing, create a fresh Python 3.11/3.12 environment.
+
+## Setup
+
+Install frontend dependencies:
+
+```powershell
+cd path\to\Sign-Language-FE
 npm install
 ```
 
-## Chạy Local
+Create and install backend dependencies:
 
-```bash
+```powershell
+cd path\to\Sign-Language-FE\backend
+py -3.11 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+```
+
+If `py -3.11` is not available, install Python 3.11 or 3.12 first, then rerun the commands above.
+
+## Run Backend
+
+Open terminal 1:
+
+```powershell
+cd path\to\Sign-Language-FE\backend
+.\.venv\Scripts\Activate.ps1
+python run_server.py
+```
+
+Expected output:
+
+```text
+Python executable: ...\backend\.venv\Scripts\python.exe
+PyTorch: ...
+Uvicorn running on http://127.0.0.1:8000
+```
+
+Keep this terminal open.
+
+Check backend health from another terminal:
+
+```powershell
+python -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8000/health').read().decode())"
+```
+
+Expected:
+
+```json
+{"status":"ok","checkpoint_exists":true,"torch_available":true}
+```
+
+## Run Frontend
+
+Open terminal 2:
+
+```powershell
+cd path\to\Sign-Language-FE
 npm run dev -- --host 127.0.0.1
 ```
 
-Mở URL Vite in ra, thường là:
+Open the Vite URL, usually:
 
 ```text
 http://127.0.0.1:5173/
 ```
 
-Nếu port `5173` đang bị server cũ chiếm, tắt server đó hoặc chạy port khác:
+## Test Flow
 
-```bash
-npm run dev -- --host 127.0.0.1 --port 5175 --strictPort
-```
+1. Start the backend first.
+2. Start the frontend second.
+3. Open the app in the browser.
+4. Click `Start Camera` or `Upload Video`.
+5. Confirm that hand/pose overlays are visible.
+6. Watch `Frame buffer` in the prediction panel.
+7. It should count from `0/60` to `60/60`.
+8. When 60 processed frames are ready, the frontend calls `POST /model/predict`.
+9. If the backend is healthy, the prediction label should update.
+
+Uploaded videos autoplay and loop to make testing easier.
 
 ## Build
 
-```bash
+```powershell
+cd path\to\Sign-Language-FE
 npm run build
 ```
 
-Build output nằm trong `dist/`.
+## Backend API
 
-## MediaPipe Local Assets
+- `GET /health`: checks backend, checkpoint, and PyTorch availability.
+- `GET /model/metadata`: returns model metadata.
+- `POST /model/predict`: runs inference for `[60, 291]` or `[batch, 60, 291]`.
+- `POST /model/benchmark`: measures synthetic inference latency.
 
-Ứng dụng cần các file sau:
+Synthetic predict test:
+
+```powershell
+python -c "import json, urllib.request; data=json.dumps({'sequence': [[[0]*291]*60], 'top_k': 3}).encode(); req=urllib.request.Request('http://127.0.0.1:8000/model/predict', data=data, headers={'Content-Type':'application/json'}); print(urllib.request.urlopen(req).read().decode())"
+```
+
+## Troubleshooting
+
+### `POST /model/predict 503`
+
+The backend is running, but the Python environment does not have PyTorch.
+
+Fix:
+
+```powershell
+cd path\to\Sign-Language-FE\backend
+.\.venv\Scripts\Activate.ps1
+python -c "import torch; print(torch.__version__)"
+```
+
+If this fails, reinstall backend dependencies in a Python 3.11/3.12 virtual environment:
+
+```powershell
+python -m pip install -r requirements.txt
+```
+
+### `ERR_CONNECTION_REFUSED`
+
+The frontend cannot reach the backend. Make sure this is running:
 
 ```text
-public/mediapipe/models/
-  face_landmarker.task
-  hand_landmarker.task
-  pose_landmarker_lite.task
-
-public/mediapipe/wasm/
-  vision_wasm_internal.js
-  vision_wasm_internal.wasm
-  vision_wasm_module_internal.js
-  vision_wasm_module_internal.wasm
-  vision_wasm_nosimd_internal.js
-  vision_wasm_nosimd_internal.wasm
+http://127.0.0.1:8000
 ```
 
-Trong development, Vite config serve wasm runtime qua `/mediapipe-dev-wasm` để tránh lỗi import file JavaScript trực tiếp từ `public`. Trong production build, các file trong `public/mediapipe` được copy sang `dist/mediapipe`.
+Start it with:
 
-## Kiến Trúc Camera Hiện Tại
+```powershell
+cd path\to\Sign-Language-FE\backend
+.\.venv\Scripts\Activate.ps1
+python run_server.py
+```
 
-- `src/hooks/useCamera.ts`: xin quyền webcam, bật/tắt stream.
-- `src/hooks/useMediaPipeLandmarks.ts`: resize frame vào canvas nhỏ, gửi frame sang worker, nhận landmark và vẽ overlay.
-- `src/workers/mediaPipeLandmarks.worker.ts`: mỗi worker chạy một task MediaPipe (`hand`, `face`, hoặc `pose`) bằng GPU delegate.
-- `src/components/demo/CameraPreview.tsx`: hiển thị video, canvas overlay, trạng thái MediaPipe và lỗi camera.
+### `ERR_NO_BUFFER_SPACE`
 
-## Trạng Thái AI/Backend
+This usually happens after many repeated failed backend requests. Fix the backend error first, then reload the browser page.
 
-Hiện tại phần landmark là thật, chạy local trên browser. Tuy nhiên phần nhận diện câu/ký hiệu vẫn là mock:
+### `Frame buffer` does not increase
 
-- `src/services/recognitionService.ts`
-- `src/services/vectorDbService.ts`
-- `src/hooks/useMockRecognition.ts`
-- `src/data/mockPredictions.ts`
+Check:
 
-Khi backend thật sẵn sàng, thay các service mock bằng API tới Python/FastAPI hoặc pipeline inference thật.
+- The camera or uploaded video is actually playing.
+- MediaPipe status shows hand/pose counts.
+- Browser camera permission is allowed.
+- For uploaded video, press play manually if autoplay is blocked.
 
-## Đánh Giá Hiệu Năng Cần Có
+### `Frame buffer` reaches 60 but the label does not change
 
-Web hiện có panel `Pipeline Performance` ngay dưới camera preview. Panel này đo trực tiếp phần pipeline frontend có thể đo được và đánh dấu rõ những chỉ số cần model/backend thật.
+Open DevTools -> Network -> filter by `predict`.
 
-| Chỉ số | Trạng thái hiện tại | Cần bổ sung khi có model thật |
-| --- | --- | --- |
-| MediaPipe extraction time | Đã có trong web. Đo thời gian xử lý landmark trong 3 worker và lấy giá trị lớn nhất của hand/face/pose. | Có thể lưu log theo từng video test để tính trung bình, min, max, p95. |
-| Model inference time | Có ô hiển thị trong web nhưng đang là `Not measured`, vì model nhận diện ký hiệu thật chưa được nối. | Đo thời gian model phân loại/sequence model chạy sau khi có keypoint. |
-| End-to-end latency | Đã có trong web cho pipeline camera -> MediaPipe -> overlay. | Khi nối model thật, mở rộng đến lúc có prediction cuối cùng. |
-| FPS pipeline | Đã có trong web. Đếm số frame landmark hoàn tất mỗi giây. | Khi nối model thật, đổi thành FPS của pipeline đầy đủ camera -> MediaPipe -> model -> smoothing -> output. |
-| Model size | Đã có trong web cho tổng kích thước các MediaPipe `.task` local và breakdown từng file. | Thêm kích thước model nhận diện ký hiệu sau huấn luyện, ví dụ `.onnx`, `.tflite`, `.pt`, `.pth` hoặc `.keras`. |
-| Smoothing/voting | Có phần readiness trong web với đề xuất majority vote window. | Khi có prediction thật, đo số lần label đổi trước/sau smoothing trên cùng video test. |
-| RAM usage | Đã có JS heap RAM nếu browser hỗ trợ `performance.memory`. | Đo thêm process memory bằng DevTools hoặc Task Manager nếu cần báo cáo hệ thống. |
-| CPU/GPU usage | Có ô hiển thị trong web nhưng browser không cung cấp số đo chính xác, nên đang ghi `Not available`. | Đo bằng Chrome DevTools Performance, Windows Task Manager, GPU profiler hoặc backend profiler. |
+- `200`: check the response body.
+- `503`: backend Python environment is missing PyTorch.
+- No request: recognition is not active or frames are not reaching the prediction hook.
 
-### Gợi Ý Cách Đo
+### MediaPipe `landmark_projection_calculator` warning
 
-- **MediaPipe extraction time**: hiện đã đo trong từng worker bằng `performance.now()`.
-- **Model inference time**: đặt timer quanh hàm predict của model thật.
-- **End-to-end latency**: hiện đo từ lúc gửi frame vào pipeline đến lúc nhận đủ landmark để vẽ overlay.
-- **FPS**: hiện đếm số frame landmark hoàn tất trong mỗi giây, không chỉ FPS của video preview.
-- **Model size**: hiện đọc `Content-Length` của các model local trong `public/mediapipe/models`.
-- **RAM/CPU/GPU usage**: ghi nhận bằng Chrome DevTools, Windows Task Manager hoặc công cụ profiler tương ứng.
-- **Smoothing/voting**: so sánh số lần label bị đổi trước và sau khi áp dụng thuật toán trên cùng một đoạn video test.
+This warning is usually safe to ignore if hand/pose overlays are visible.
 
-### Công Thức Đề Xuất
+### `favicon.ico 404`
+
+This does not affect recognition.
+
+## Notes
+
+The v2 model was trained with `seq_len=60`, so the frontend buffers 60 processed frames before prediction.
+
+60 processed frames are not always 2 seconds. Actual wait time depends on MediaPipe pipeline FPS:
 
 ```text
-MediaPipe extraction time = t_landmarks_done - t_frame_sent_to_mediapipe
-Model inference time      = t_model_output - t_model_input
-End-to-end latency        = t_final_output - t_frame_received
-Pipeline FPS              = completed_predictions / elapsed_seconds
+wait time = 60 / completed_pipeline_fps
 ```
 
-## Ghi Chú Khi Test Camera
+Examples:
 
-- Nên chạy trên `http://127.0.0.1` hoặc HTTPS để browser cho phép webcam.
-- Nếu thấy `MediaPipe unavailable`, hãy restart dev server sau khi đổi `vite.config.ts`.
-- Nếu trình duyệt đã cache server cũ, đổi port hoặc hard refresh.
-- Fake camera trong Chrome có thể trả `Hands: 0 | Face: 0 | Pose: 0`; điều này vẫn xác nhận MediaPipe đã load và chạy.
-
-## Backend Model Test
-
-Đã bổ sung FastAPI backend để test model trong `asl_tcn_baseline`:
-
-- `asl_tcn_baseline/best.pt`: checkpoint TCN.
-- `asl_tcn_baseline/config.json`: cấu hình model, `seq_len=60`, `input_dim=634`, `num_classes=2000`.
-- `asl_tcn_baseline/history.json`: lịch sử train/validation.
-- `asl_tcn_baseline/latency.json`: latency benchmark đã lưu.
-
-Source backend nằm trong `backend/app`:
-
-- `GET /health`: kiểm tra checkpoint và PyTorch.
-- `GET /model/metadata`: đọc config, history summary, latency và kích thước checkpoint.
-- `POST /model/predict`: nhận keypoints shape `[60, 634]` hoặc `[batch, 60, 634]`, trả top-k class.
-- `POST /model/benchmark`: đo latency inference model trên input synthetic.
-
-Chạy backend:
-
-```bash
-cd backend
-python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
-```
-
-Lưu ý: venv hiện tại đang dùng Python 3.14 và chưa có PyTorch, nên predict sẽ trả HTTP 503 cho đến khi tạo backend env Python 3.11/3.12 và cài `torch`.
+- 30 FPS -> about 2 seconds
+- 20 FPS -> about 3 seconds
+- 10 FPS -> about 6 seconds
