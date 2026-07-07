@@ -1,14 +1,11 @@
 import {
   DrawingUtils,
-  FaceLandmarker,
   HandLandmarker,
   PoseLandmarker,
 } from "@mediapipe/tasks-vision";
 import { useEffect, useState, type Dispatch, type RefObject, type SetStateAction } from "react";
 import {
   extractFrameFeatures,
-  handPreviewToLandmarks,
-  preprocessFrameFeatures,
   type FrameFeatures,
 } from "../utils/landmarkPreprocessing";
 
@@ -86,7 +83,7 @@ type VideoElementWithFrameCallback = HTMLVideoElement & {
 type LandmarkStatus = "idle" | "loading" | "ready" | "error";
 type InferenceDelegate = "CPU" | "GPU";
 type DisplayDelegate = InferenceDelegate | "Mixed";
-type LandmarkTask = "hand" | "face" | "pose";
+type LandmarkTask = "hand" | "pose";
 type WorkerToMainMessage =
   | { type: "ready"; delegate: InferenceDelegate; task: LandmarkTask }
   | {
@@ -213,7 +210,7 @@ export function useMediaPipeLandmarks({ videoRef, canvasRef, isActive, onLandmar
         if (event.data.type === "ready") {
           readyWorkers += 1;
           workerDelegates[event.data.task] = event.data.delegate;
-          if (readyWorkers === 3) {
+          if (readyWorkers === 2) {
             const delegates = Object.values(workerDelegates);
             setDelegate(delegates.every((value) => value === "GPU") ? "GPU" : delegates.every((value) => value === "CPU") ? "CPU" : "Mixed");
             setStatus("ready");
@@ -281,13 +278,6 @@ export function useMediaPipeLandmarks({ videoRef, canvasRef, isActive, onLandmar
         drawing.drawLandmarks(handLandmarks, { color: "#ecfeff", fillColor: "#22c55e", radius: 3 });
       }
 
-      for (const faceLandmarks of landmarks.face) {
-        drawing.drawConnectors(faceLandmarks, FaceLandmarker.FACE_LANDMARKS_CONTOURS, {
-          color: "#38bdf8",
-          lineWidth: 1,
-        });
-      }
-
       for (const poseLandmarks of landmarks.pose) {
         drawing.drawConnectors(poseLandmarks, PoseLandmarker.POSE_CONNECTIONS, {
           color: "#fb7185",
@@ -341,7 +331,7 @@ export function useMediaPipeLandmarks({ videoRef, canvasRef, isActive, onLandmar
       }
       if (
         isCancelled ||
-        readyWorkers < 3 ||
+        readyWorkers < 2 ||
         isFrameInFlight ||
         !video ||
         !canvas ||
@@ -362,20 +352,18 @@ export function useMediaPipeLandmarks({ videoRef, canvasRef, isActive, onLandmar
       syncInferenceCanvas(inferenceCanvas, video);
       inferenceContext.drawImage(video, 0, 0, inferenceCanvas.width, inferenceCanvas.height);
       isFrameInFlight = true;
-      pendingResults = 3;
+      pendingResults = 2;
       activeFrameStartedAt = performance.now();
 
       void Promise.all([
         createImageBitmap(inferenceCanvas),
         createImageBitmap(inferenceCanvas),
-        createImageBitmap(inferenceCanvas),
       ])
-        .then(([handFrame, faceFrame, poseFrame]) => {
-          const frames = { hand: handFrame, face: faceFrame, pose: poseFrame };
+        .then(([handFrame, poseFrame]) => {
+          const frames = { hand: handFrame, pose: poseFrame };
 
           if (isCancelled) {
             handFrame.close();
-            faceFrame.close();
             poseFrame.close();
             return;
           }
@@ -418,7 +406,6 @@ export function useMediaPipeLandmarks({ videoRef, canvasRef, isActive, onLandmar
 function createWorkers() {
   return {
     hand: createWorker(),
-    face: createWorker(),
     pose: createWorker(),
   };
 }
@@ -435,10 +422,6 @@ function assignLandmarks(landmarks: WorkerLandmarks, task: LandmarkTask, nextLan
     landmarks.handWorldLandmarks = message.worldLandmarks ?? [];
     landmarks.handedness = message.handedness ?? [];
   }
-  if (task === "face") {
-    landmarks.face = nextLandmarks;
-    landmarks.faceBlendshapes = message.blendshapes ?? [];
-  }
   if (task === "pose") {
     landmarks.pose = nextLandmarks;
     landmarks.poseWorldLandmarks = message.worldLandmarks ?? [];
@@ -449,13 +432,7 @@ function buildDisplayLandmarks(landmarks: WorkerLandmarks, previewFrameBuffer: F
   previewFrameBuffer.push(extractFrameFeatures(landmarks));
   while (previewFrameBuffer.length > PREVIEW_INTERPOLATION_FRAMES) previewFrameBuffer.shift();
 
-  const currentIndex = previewFrameBuffer.length - 1;
-  const preprocessed = preprocessFrameFeatures(previewFrameBuffer);
-
-  return {
-    ...landmarks,
-    hands: handPreviewToLandmarks(preprocessed.previewHands[currentIndex] ?? [], preprocessed.validMask[currentIndex] ?? []),
-  };
+  return landmarks;
 }
 
 function updatePerformanceMetrics(
@@ -513,7 +490,6 @@ function clearCanvas(canvas: HTMLCanvasElement | null) {
 async function loadModelSizes() {
   const items = await Promise.all([
     getAssetSize("Hand landmarker", "/mediapipe/models/hand_landmarker.task"),
-    getAssetSize("Face landmarker", "/mediapipe/models/face_landmarker.task"),
     getAssetSize("Pose landmarker lite", "/mediapipe/models/pose_landmarker_lite.task"),
   ]);
 

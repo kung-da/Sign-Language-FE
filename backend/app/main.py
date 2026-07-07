@@ -7,7 +7,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
-from .model import ModelUnavailableError, get_predictor, load_baseline_metadata
+from .model import ModelUnavailableError, get_predictor, load_model_metadata
 
 
 app = FastAPI(title="Sign Language Model Test API")
@@ -22,7 +22,7 @@ app.add_middleware(
 
 
 class PredictRequest(BaseModel):
-    sequence: Any = Field(..., description="Keypoints shaped [60, 634] or [batch, 60, 634].")
+    sequence: Any = Field(..., description="V2 world pose+hands keypoints shaped [60, 291] or [batch, 60, 291].")
     top_k: int = Field(default=5, ge=1, le=50)
 
 
@@ -33,7 +33,7 @@ class BenchmarkRequest(BaseModel):
 
 @app.get("/health")
 def health() -> dict[str, Any]:
-    metadata = load_baseline_metadata()
+    metadata = load_model_metadata()
     return {
         "status": "ok",
         "checkpoint_exists": metadata["checkpoint_exists"],
@@ -43,7 +43,7 @@ def health() -> dict[str, Any]:
 
 @app.get("/model/metadata")
 def model_metadata() -> dict[str, Any]:
-    return load_baseline_metadata()
+    return load_model_metadata()
 
 
 @app.post("/model/predict")

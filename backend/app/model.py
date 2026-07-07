@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import csv
 import statistics
 import time
 from dataclasses import dataclass
@@ -17,12 +18,12 @@ except Exception:  # pragma: no cover - depends on local runtime
     nn = None
 
 
-ROOT_DIR = Path(__file__).resolve().parents[2]
-BASELINE_DIR = ROOT_DIR / "asl_tcn_baseline"
-CHECKPOINT_PATH = BASELINE_DIR / "best.pt"
-CONFIG_PATH = BASELINE_DIR / "config.json"
-HISTORY_PATH = BASELINE_DIR / "history.json"
-LATENCY_PATH = BASELINE_DIR / "latency.json"
+BACKEND_DIR = Path(__file__).resolve().parents[1]
+MODEL_DIR = BACKEND_DIR / "models" / "v2"
+CHECKPOINT_PATH = MODEL_DIR / "final_trainval_model.pt"
+CONFIG_PATH = MODEL_DIR / "config.json"
+HISTORY_PATH = MODEL_DIR / "history.csv"
+SUMMARY_PATH = MODEL_DIR / "train_summary.json"
 
 
 class ModelUnavailableError(RuntimeError):
@@ -35,120 +36,91 @@ def read_json(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def load_baseline_metadata() -> dict[str, Any]:
+def read_history_summary(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {"epochs_recorded": None, "best_epoch_by_val_acc": None, "best_val_acc": None}
+
+    with path.open("r", encoding="utf-8", newline="") as handle:
+        rows = list(csv.DictReader(handle))
+
+    best_epoch = None
+    best_val_acc = None
+    for row in rows:
+        try:
+            val_acc = float(row.get("val_acc", "nan"))
+        except ValueError:
+            continue
+        if not np.isnan(val_acc) and (best_val_acc is None or val_acc > best_val_acc):
+            best_val_acc = val_acc
+            best_epoch = row.get("epoch")
+
+    return {
+        "best_epoch_by_val_acc": best_epoch,
+        "best_val_acc": best_val_acc,
+        "epochs_recorded": len(rows),
+    }
+
+
+def load_model_metadata() -> dict[str, Any]:
     config = read_json(CONFIG_PATH)
-    history = read_json(HISTORY_PATH)
-    latency = read_json(LATENCY_PATH)
+    summary = read_json(SUMMARY_PATH)
     checkpoint_size_mb = (
         CHECKPOINT_PATH.stat().st_size / (1024 * 1024) if CHECKPOINT_PATH.exists() else None
     )
 
-    best_epoch = None
-    best_val_acc = None
-    rows = history.get("history") if isinstance(history, dict) else None
-    if isinstance(rows, list):
-        for row in rows:
-            val_acc = row.get("val_acc") if isinstance(row, dict) else None
-            if isinstance(val_acc, (int, float)) and (
-                best_val_acc is None or val_acc > best_val_acc
-            ):
-                best_val_acc = val_acc
-                best_epoch = row.get("epoch")
-
     return {
-        "baseline_dir": str(BASELINE_DIR),
+        "model_dir": str(MODEL_DIR),
         "checkpoint_path": str(CHECKPOINT_PATH),
         "checkpoint_exists": CHECKPOINT_PATH.exists(),
         "checkpoint_size_mb": checkpoint_size_mb,
         "config": config,
-        "latency": latency,
-        "history_summary": {
-            "best_epoch_by_val_acc": best_epoch,
-            "best_val_acc": best_val_acc,
-            "epochs_recorded": len(rows) if isinstance(rows, list) else None,
-        },
+        "train_summary": summary,
+        "history_summary": read_history_summary(HISTORY_PATH),
         "runtime": {
             "torch_available": torch is not None,
-            "normalization_available": False,
-            "labels_available": False,
+            "standardization_available": True,
+            "labels_available": True,
         },
     }
 
 
 if nn is not None:
 
-    class TemporalBlock(nn.Module):
-        def __init__(
-            self,
-            in_channels: int,
-            out_channels: int,
-            kernel_size: int,
-            dilation: int,
-            dropout: float,
-        ) -> None:
-            super().__init__()
-            padding = (kernel_size - 1) * dilation // 2
-            self.conv1 = nn.Conv1d(
-                in_channels,
-                out_channels,
-                kernel_size,
-                padding=padding,
-                dilation=dilation,
-            )
-            self.bn1 = nn.BatchNorm1d(out_channels)
-            self.conv2 = nn.Conv1d(
-                out_channels,
-                out_channels,
-                kernel_size,
-                padding=padding,
-                dilation=dilation,
-            )
-            self.bn2 = nn.BatchNorm1d(out_channels)
-            self.dropout = nn.Dropout(dropout)
-            self.relu = nn.ReLU()
-            self.res = (
-                nn.Conv1d(in_channels, out_channels, kernel_size=1)
-                if in_channels != out_channels
-                else nn.Identity()
-            )
-
-        def forward(self, x: torch.Tensor) -> torch.Tensor:
-            residual = self.res(x)
-            out = self.conv1(x)
-            out = self.bn1(out)
-            out = self.relu(out)
-            out = self.dropout(out)
-            out = self.conv2(out)
-            out = self.bn2(out)
-            out = self.relu(out)
-            out = self.dropout(out)
-            return self.relu(out + residual)
-
-
-    class TCNClassifier(nn.Module):
+    class TransformerSequenceClassifier(nn.Module):
         def __init__(
             self,
             input_dim: int,
             num_classes: int,
-            hidden_dim: int,
+            d_model: int,
+            num_heads: int,
+            num_layers: int,
+            dim_feedforward: int,
+            seq_len: int,
             dropout: float,
         ) -> None:
             super().__init__()
-            self.net = nn.Sequential(
-                TemporalBlock(input_dim, hidden_dim, kernel_size=3, dilation=1, dropout=dropout),
-                TemporalBlock(hidden_dim, hidden_dim, kernel_size=3, dilation=2, dropout=dropout),
-                TemporalBlock(hidden_dim, hidden_dim, kernel_size=3, dilation=4, dropout=dropout),
+            self.cls_token = nn.Parameter(torch.zeros(1, 1, d_model))
+            self.pos_embedding = nn.Parameter(torch.zeros(1, seq_len + 1, d_model))
+            self.input_proj = nn.Linear(input_dim, d_model)
+            encoder_layer = nn.TransformerEncoderLayer(
+                d_model=d_model,
+                nhead=num_heads,
+                dim_feedforward=dim_feedforward,
+                dropout=dropout,
+                batch_first=True,
             )
-            self.classifier = nn.Sequential(
-                nn.BatchNorm1d(hidden_dim),
-                nn.Dropout(dropout),
-                nn.Linear(hidden_dim, num_classes),
-            )
+            self.encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+            self.norm = nn.LayerNorm(d_model)
+            self.classifier = nn.Linear(d_model, num_classes)
 
         def forward(self, x: torch.Tensor) -> torch.Tensor:
-            x = x.transpose(1, 2)
-            x = self.net(x)
-            x = x.mean(dim=2)
+            batch_size = x.shape[0]
+            x = self.input_proj(x)
+            cls = self.cls_token.expand(batch_size, -1, -1)
+            x = torch.cat((cls, x), dim=1)
+            x = x + self.pos_embedding[:, : x.shape[1], :]
+            x = self.encoder(x)
+            x = self.norm(x[:, 0])
             return self.classifier(x)
 
 
@@ -159,40 +131,72 @@ class PredictionResult:
     batch_size: int
 
 
-class BaselinePredictor:
+class V2Predictor:
     def __init__(self, device: str = "cpu") -> None:
         if torch is None or nn is None:
             raise ModelUnavailableError(
                 "PyTorch is not installed. Install torch in a Python 3.11/3.12 backend env "
-                "to run best.pt inference."
+                "to run v2 inference."
             )
         if not CHECKPOINT_PATH.exists():
             raise ModelUnavailableError(f"Checkpoint not found: {CHECKPOINT_PATH}")
 
         self.config = read_json(CONFIG_PATH)
         self.seq_len = int(self.config.get("seq_len", 60))
-        self.input_dim = int(self.config.get("input_dim", 634))
+        self.input_dim = int(self.config.get("input_dim", 291))
         self.num_classes = int(self.config.get("num_classes", 2000))
         self.device = torch.device(device)
 
-        self.model = TCNClassifier(
+        checkpoint = torch.load(CHECKPOINT_PATH, map_location=self.device, weights_only=False)
+        self.id_to_label = self._load_id_to_label(checkpoint.get("id_to_label", {}))
+        self.feature_mean = self._load_feature_stat(checkpoint.get("feature_mean"), default=0.0)
+        self.feature_std = self._load_feature_stat(checkpoint.get("feature_std"), default=1.0)
+
+        self.model = TransformerSequenceClassifier(
             input_dim=self.input_dim,
             num_classes=self.num_classes,
-            hidden_dim=int(self.config.get("hidden_dim", 256)),
+            d_model=int(self.config.get("d_model", 448)),
+            num_heads=int(self.config.get("num_heads", 8)),
+            num_layers=int(self.config.get("num_layers", 2)),
+            dim_feedforward=int(self.config.get("dim_feedforward", 896)),
+            seq_len=self.seq_len,
             dropout=float(self.config.get("dropout", 0.5)),
         ).to(self.device)
 
-        checkpoint = torch.load(CHECKPOINT_PATH, map_location=self.device, weights_only=False)
         state_dict = checkpoint.get("model_state_dict", checkpoint)
         self.model.load_state_dict(state_dict, strict=True)
         self.model.eval()
+
+    def _load_feature_stat(self, value: Any, default: float) -> torch.Tensor:
+        if value is None:
+            arr = np.full((self.input_dim,), default, dtype=np.float32)
+        else:
+            arr = np.asarray(value, dtype=np.float32)
+        if arr.shape != (self.input_dim,):
+            raise ModelUnavailableError(
+                f"feature statistic must have shape [{self.input_dim}], got {list(arr.shape)}"
+            )
+        if default == 1.0:
+            arr = np.where(np.abs(arr) < 1e-8, 1.0, arr)
+        return torch.from_numpy(arr).to(self.device).view(1, 1, self.input_dim)
+
+    def _load_id_to_label(self, value: Any) -> dict[int, str]:
+        if not isinstance(value, dict):
+            return {}
+        labels: dict[int, str] = {}
+        for key, label in value.items():
+            try:
+                labels[int(key)] = str(label)
+            except (TypeError, ValueError):
+                continue
+        return labels
 
     def validate_sequence(self, sequence: Any) -> np.ndarray:
         arr = np.asarray(sequence, dtype=np.float32)
         if arr.ndim == 2:
             arr = arr[None, :, :]
         if arr.ndim != 3:
-            raise ValueError("sequence must have shape [60, 634] or [batch, 60, 634]")
+            raise ValueError(f"sequence must have shape [{self.seq_len}, {self.input_dim}] or [batch, {self.seq_len}, {self.input_dim}]")
         expected = (self.seq_len, self.input_dim)
         if tuple(arr.shape[1:]) != expected:
             raise ValueError(f"expected sequence shape [batch, {expected[0]}, {expected[1]}], got {list(arr.shape)}")
@@ -204,6 +208,7 @@ class BaselinePredictor:
 
         with torch.inference_mode():
             tensor = torch.from_numpy(arr).to(self.device)
+            tensor = (tensor - self.feature_mean) / self.feature_std
             start = time.perf_counter()
             logits = self.model(tensor)
             probs = torch.softmax(logits, dim=1)
@@ -216,7 +221,7 @@ class BaselinePredictor:
                 [
                     {
                         "class_index": int(index),
-                        "label": f"class_{int(index)}",
+                        "label": self.id_to_label.get(int(index), f"class_{int(index)}"),
                         "probability": float(probability),
                     }
                     for probability, index in zip(row_values, row_indices)
@@ -251,11 +256,14 @@ class BaselinePredictor:
         }
 
 
-_predictor: BaselinePredictor | None = None
+_predictor: V2Predictor | None = None
 
 
-def get_predictor() -> BaselinePredictor:
+def get_predictor() -> V2Predictor:
     global _predictor
     if _predictor is None:
-        _predictor = BaselinePredictor()
+        _predictor = V2Predictor()
     return _predictor
+
+
+load_baseline_metadata = load_model_metadata
