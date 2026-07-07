@@ -136,10 +136,12 @@ export function CameraPreview({ stream, cameraSettings, isActive, onStart, onSto
               src={uploadedVideo ?? undefined}
               autoPlay
               controls={!!uploadedVideo}
+              loop={!!uploadedVideo}
               playsInline
               muted
               onLoadedMetadata={() => {
                 if (uploadedVideo) {
+                  if (videoRef.current) videoRef.current.currentTime = 0;
                   void videoRef.current?.play().catch(() => undefined);
                 }
               }}
