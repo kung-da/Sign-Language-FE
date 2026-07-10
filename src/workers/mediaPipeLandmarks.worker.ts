@@ -146,7 +146,7 @@ async function createLandmarker(nextTask: LandmarkTask, delegate: InferenceDeleg
   return PoseLandmarker.createFromOptions(vision, {
     baseOptions: {
       delegate,
-      modelAssetPath: `${MODEL_ROOT}/pose_landmarker_lite.task`,
+      modelAssetPath: `${MODEL_ROOT}/pose_landmarker_heavy.task`,
     },
     runningMode: "VIDEO",
     numPoses: 1,

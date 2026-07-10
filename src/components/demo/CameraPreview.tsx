@@ -145,11 +145,11 @@ export function CameraPreview({ stream, cameraSettings, isActive, onStart, onSto
                   void videoRef.current?.play().catch(() => undefined);
                 }
               }}
-              className="h-full w-full scale-x-[-1] object-cover opacity-80"
+              className="h-full w-full object-cover opacity-80"
             />
             <canvas
               ref={canvasRef}
-              className="pointer-events-none absolute inset-0 h-full w-full scale-x-[-1] object-cover"
+              className="pointer-events-none absolute inset-0 h-full w-full object-cover"
             />
             <div className="absolute left-3 top-3 rounded-md border border-white/10 bg-slate-950/70 px-3 py-2 text-xs font-semibold text-text backdrop-blur">
               {landmarkStatus === "loading"

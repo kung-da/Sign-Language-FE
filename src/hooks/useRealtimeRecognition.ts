@@ -4,7 +4,7 @@ import type { PredictionResult } from "../types/recognition";
 import { useLandmarkBuffer } from "./useLandmarkBuffer";
 import type { WorkerLandmarks } from "./useMediaPipeLandmarks";
 
-const SEQ_LEN = 60;
+const WINDOW_FRAMES = 90;
 const BACKEND_RETRY_COOLDOWN_MS = 5000;
 
 export function useRealtimeRecognition(isRunning: boolean) {
@@ -37,8 +37,6 @@ export function useRealtimeRecognition(isRunning: boolean) {
 
       if (isReady()) {
         const sequence = getSequence();
-        reset();
-        setBufferProgress(0);
 
         inferringRef.current = true;
         setIsLoading(true);
@@ -76,7 +74,7 @@ export function useRealtimeRecognition(isRunning: boolean) {
     prediction,
     isLoading,
     bufferProgress,
-    bufferTotal: SEQ_LEN,
+    bufferTotal: WINDOW_FRAMES,
     onLandmarks,
   };
 }

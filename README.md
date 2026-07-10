@@ -7,7 +7,7 @@ React/Vite frontend + FastAPI backend for testing sign-language recognition with
 - Checkpoint: `backend/models/v2/final_trainval_model.pt`
 - Config: `backend/models/v2/config.json`
 - Input shape: `[60, 291]` or `[batch, 60, 291]`
-- Features: world pose + world hands only
+- Features: demo-compatible preprocessed world pose + world hands only
 - Face and mouth features are not used by the v2 model
 
 Feature dimension:
@@ -196,7 +196,7 @@ This does not affect recognition.
 
 ## Notes
 
-The v2 model was trained with `seq_len=60`, so the frontend buffers 60 processed frames before prediction.
+The v2 model was trained with `seq_len=60`. The frontend keeps a live 90-frame window, starts prediction after 30 frames, trims inactive frames, resamples to 60 frames, normalizes pose/hands like the Python demo extractor, and then sends `[60, 291]` to the backend.
 
 60 processed frames are not always 2 seconds. Actual wait time depends on MediaPipe pipeline FPS:
 

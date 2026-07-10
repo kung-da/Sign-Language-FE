@@ -495,7 +495,7 @@ function clearCanvas(canvas: HTMLCanvasElement | null) {
 async function loadModelSizes() {
   const items = await Promise.all([
     getAssetSize("Hand landmarker", "/mediapipe/models/hand_landmarker.task"),
-    getAssetSize("Pose landmarker lite", "/mediapipe/models/pose_landmarker_lite.task"),
+    getAssetSize("Pose landmarker heavy", "/mediapipe/models/pose_landmarker_heavy.task"),
   ]);
 
   return {

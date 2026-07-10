@@ -99,21 +99,27 @@ if nn is not None:
             dropout: float,
         ) -> None:
             super().__init__()
-            self.cls_token = nn.Parameter(torch.zeros(1, 1, d_model))
-            self.pos_embedding = nn.Parameter(torch.zeros(1, seq_len + 1, d_model))
+            self.seq_len = seq_len
             self.input_proj = nn.Linear(input_dim, d_model)
+            self.cls_token = nn.Parameter(torch.randn(1, 1, d_model) * 0.02)
+            self.pos_embedding = nn.Parameter(torch.randn(1, seq_len + 1, d_model) * 0.02)
             encoder_layer = nn.TransformerEncoderLayer(
                 d_model=d_model,
                 nhead=num_heads,
                 dim_feedforward=dim_feedforward,
                 dropout=dropout,
+                activation="gelu",
                 batch_first=True,
+                norm_first=True,
             )
             self.encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
             self.norm = nn.LayerNorm(d_model)
+            self.dropout = nn.Dropout(dropout)
             self.classifier = nn.Linear(d_model, num_classes)
 
         def forward(self, x: torch.Tensor) -> torch.Tensor:
+            if x.shape[1] != self.seq_len:
+                raise ValueError(f"Expected seq_len={self.seq_len}, got {x.shape[1]}")
             batch_size = x.shape[0]
             x = self.input_proj(x)
             cls = self.cls_token.expand(batch_size, -1, -1)
@@ -121,6 +127,7 @@ if nn is not None:
             x = x + self.pos_embedding[:, : x.shape[1], :]
             x = self.encoder(x)
             x = self.norm(x[:, 0])
+            x = self.dropout(x)
             return self.classifier(x)
 
 
@@ -148,6 +155,11 @@ class V2Predictor:
         self.device = torch.device(device)
 
         checkpoint = torch.load(CHECKPOINT_PATH, map_location=self.device, weights_only=False)
+        self.config.update(checkpoint.get("config", {}))
+        self.seq_len = int(self.config.get("seq_len", self.seq_len))
+        self.input_dim = int(self.config.get("input_dim", self.input_dim))
+        self.num_classes = int(self.config.get("num_classes", self.num_classes))
+
         self.id_to_label = self._load_id_to_label(checkpoint.get("id_to_label", {}))
         self.feature_mean = self._load_feature_stat(checkpoint.get("feature_mean"), default=0.0)
         self.feature_std = self._load_feature_stat(checkpoint.get("feature_std"), default=1.0)
