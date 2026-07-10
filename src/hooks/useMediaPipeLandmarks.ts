@@ -9,7 +9,7 @@ import {
   type FrameFeatures,
 } from "../utils/landmarkPreprocessing";
 
-const TARGET_DETECTION_FPS = 60;
+const TARGET_DETECTION_FPS = 10;
 const DETECTION_INTERVAL_MS = 1000 / TARGET_DETECTION_FPS;
 const INFERENCE_MAX_WIDTH = 480;
 const PREVIEW_INTERPOLATION_FRAMES = 60;
@@ -348,9 +348,7 @@ export function useMediaPipeLandmarks({ videoRef, canvasRef, isActive, onLandmar
         return;
       }
 
-      // requestVideoFrameCallback already fires once per decoded camera frame.
-      // Applying a second 16.67 ms gate can turn a jittery 60 FPS stream into ~30 FPS.
-      if (!scheduledWithVideoFrameCallback && now - lastDetectionMs < DETECTION_INTERVAL_MS) return;
+      if (now - lastDetectionMs < DETECTION_INTERVAL_MS) return;
       lastDetectionMs = now;
 
       syncCanvasToVideo(canvas, video);

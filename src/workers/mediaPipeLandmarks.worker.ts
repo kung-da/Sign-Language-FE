@@ -7,6 +7,7 @@ import {
 
 const WASM_ROOT = import.meta.env.DEV ? "/mediapipe-dev-wasm" : "/mediapipe/wasm";
 const MODEL_ROOT = "/mediapipe/models";
+const MIN_LANDMARK_CONFIDENCE = 0.4;
 
 type InferenceDelegate = "CPU" | "GPU";
 type LandmarkTask = "hand" | "face" | "pose";
@@ -121,9 +122,9 @@ async function createLandmarker(nextTask: LandmarkTask, delegate: InferenceDeleg
       },
       runningMode: "VIDEO",
       numHands: 2,
-      minHandDetectionConfidence: 0.5,
-      minHandPresenceConfidence: 0.5,
-      minTrackingConfidence: 0.5,
+      minHandDetectionConfidence: MIN_LANDMARK_CONFIDENCE,
+      minHandPresenceConfidence: MIN_LANDMARK_CONFIDENCE,
+      minTrackingConfidence: MIN_LANDMARK_CONFIDENCE,
     });
   }
 
@@ -135,9 +136,9 @@ async function createLandmarker(nextTask: LandmarkTask, delegate: InferenceDeleg
       },
       runningMode: "VIDEO",
       numFaces: 1,
-      minFaceDetectionConfidence: 0.5,
-      minFacePresenceConfidence: 0.5,
-      minTrackingConfidence: 0.5,
+      minFaceDetectionConfidence: MIN_LANDMARK_CONFIDENCE,
+      minFacePresenceConfidence: MIN_LANDMARK_CONFIDENCE,
+      minTrackingConfidence: MIN_LANDMARK_CONFIDENCE,
       outputFaceBlendshapes: true,
       outputFacialTransformationMatrixes: false,
     });
@@ -150,9 +151,9 @@ async function createLandmarker(nextTask: LandmarkTask, delegate: InferenceDeleg
     },
     runningMode: "VIDEO",
     numPoses: 1,
-    minPoseDetectionConfidence: 0.5,
-    minPosePresenceConfidence: 0.5,
-    minTrackingConfidence: 0.5,
+    minPoseDetectionConfidence: MIN_LANDMARK_CONFIDENCE,
+    minPosePresenceConfidence: MIN_LANDMARK_CONFIDENCE,
+    minTrackingConfidence: MIN_LANDMARK_CONFIDENCE,
     outputSegmentationMasks: false,
   });
 }

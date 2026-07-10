@@ -3,3 +3,6 @@ fastapi
 uvicorn[standard]
 numpy
 torch
+opencv-python
+mediapipe
+python-multipart

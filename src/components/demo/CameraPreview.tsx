@@ -14,16 +14,17 @@ interface CameraPreviewProps {
   onStop: () => void;
   error?: string | null;
   onLandmarks?: (landmarks: WorkerLandmarks) => void;
+  onVideoUpload?: (file: File) => Promise<void>;
   onVideoActiveChange?: (isActive: boolean) => void;
 }
 
-export function CameraPreview({ stream, cameraSettings, isActive, onStart, onStop, error, onLandmarks, onVideoActiveChange }: CameraPreviewProps) {
+export function CameraPreview({ stream, cameraSettings, isActive, onStart, onStop, error, onLandmarks, onVideoUpload, onVideoActiveChange }: CameraPreviewProps) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [uploadedVideo, setUploadedVideo] = useState<string | null>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
-  const isVideoActive = isActive || !!uploadedVideo;
+  const hasVideoPreview = isActive || !!uploadedVideo;
 
   // Keep state in sync when user exits fullscreen via Escape key
   useEffect(() => {
@@ -53,7 +54,7 @@ export function CameraPreview({ stream, cameraSettings, isActive, onStart, onSto
   } = useMediaPipeLandmarks({
     videoRef,
     canvasRef,
-    isActive: isVideoActive,
+    isActive,
     onLandmarks,
   });
 
@@ -72,8 +73,8 @@ export function CameraPreview({ stream, cameraSettings, isActive, onStart, onSto
   }, [stream, uploadedVideo]);
 
   useEffect(() => {
-    onVideoActiveChange?.(isVideoActive);
-  }, [isVideoActive, onVideoActiveChange]);
+    onVideoActiveChange?.(isActive);
+  }, [isActive, onVideoActiveChange]);
 
   useEffect(() => {
     return () => {
@@ -109,6 +110,7 @@ export function CameraPreview({ stream, cameraSettings, isActive, onStart, onSto
                   if (currentUrl) URL.revokeObjectURL(currentUrl);
                   return URL.createObjectURL(file);
                 });
+                void onVideoUpload?.(file);
               }}
             />
           </label>
@@ -122,14 +124,14 @@ export function CameraPreview({ stream, cameraSettings, isActive, onStart, onSto
               });
               onStop();
             }}
-            disabled={!isVideoActive}
+            disabled={!hasVideoPreview}
           >
             Stop
           </Button>
         </div>
       </div>
       <div ref={containerRef} className={`relative bg-slate-950 ${isFullscreen ? "flex items-center justify-center h-screen" : "aspect-video"}`}>
-        {isVideoActive ? (
+        {hasVideoPreview ? (
           <>
             <video
               ref={videoRef}
@@ -154,7 +156,9 @@ export function CameraPreview({ stream, cameraSettings, isActive, onStart, onSto
             <div className="absolute left-3 top-3 rounded-md border border-white/10 bg-slate-950/70 px-3 py-2 text-xs font-semibold text-text backdrop-blur">
               {landmarkStatus === "loading"
                 ? "Loading MediaPipe..."
-                : landmarkStatus === "ready"
+                : uploadedVideo
+                  ? "Backend demo upload"
+                  : landmarkStatus === "ready"
                   ? `${delegate ?? "CPU"} | Hands: ${counts.hands} | Face: ${counts.face} | Pose: ${counts.pose}`
                   : landmarkStatus === "error"
                     ? "MediaPipe unavailable"
@@ -184,12 +188,12 @@ export function CameraPreview({ stream, cameraSettings, isActive, onStart, onSto
             </div>
           </div>
         )}
-        {isVideoActive && (
+        {hasVideoPreview && (
           <div aria-hidden="true">
             <div className="scan-line" />
           </div>
         )}
-        {isVideoActive && landmarkError && (
+        {isActive && landmarkError && (
           <p className="absolute bottom-3 left-3 right-3 rounded-md border border-danger/30 bg-slate-950/80 px-3 py-2 text-sm text-danger">
             {landmarkError}
           </p>

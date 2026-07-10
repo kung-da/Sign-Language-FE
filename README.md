@@ -24,6 +24,7 @@ total = 291
 - Python 3.11 or 3.12 recommended
 - Python packages from `backend/requirements.txt`
 - A webcam or a local video file for testing
+- The Python demo extractor at `D:\Project\DBML\src\ASL\extract_asl_landmarks.py`, or set `ASL_EXTRACTOR_PATH` to its path before starting the backend
 
 PyTorch wheels may not be available for every Python version. If `torch` does not install or the backend reports that PyTorch is missing, create a fresh Python 3.11/3.12 environment.
 
@@ -107,7 +108,7 @@ http://127.0.0.1:5173/
 8. When 60 processed frames are ready, the frontend calls `POST /model/predict`.
 9. If the backend is healthy, the prediction label should update.
 
-Uploaded videos autoplay and loop to make testing easier.
+Uploaded videos are sent to `POST /model/predict-video` and processed by the Python demo-style extractor on the backend. Webcam mode keeps using the browser MediaPipe pipeline for realtime preview.
 
 ## Build
 
@@ -121,6 +122,7 @@ npm run build
 - `GET /health`: checks backend, checkpoint, and PyTorch availability.
 - `GET /model/metadata`: returns model metadata.
 - `POST /model/predict`: runs inference for `[60, 291]` or `[batch, 60, 291]`.
+- `POST /model/predict-video`: accepts a video file and runs the Python demo extraction + prediction flow.
 - `POST /model/benchmark`: measures synthetic inference latency.
 
 Synthetic predict test:
@@ -196,7 +198,7 @@ This does not affect recognition.
 
 ## Notes
 
-The v2 model was trained with `seq_len=60`. The frontend keeps a live 90-frame window, starts prediction after 30 frames, trims inactive frames, resamples to 60 frames, normalizes pose/hands like the Python demo extractor, and then sends `[60, 291]` to the backend.
+The v2 model was trained with `seq_len=60`. The frontend follows the Python demo pipeline: MediaPipe detection confidence is `0.4`, frames are processed at about `10 FPS`, the live window keeps 90 frames, prediction starts after 30 frames, inactive frames are trimmed, the clip is resampled to 60 frames, pose/hands are normalized like the demo extractor, and `[60, 291]` is sent to the backend.
 
 60 processed frames are not always 2 seconds. Actual wait time depends on MediaPipe pipeline FPS:
 

@@ -33,6 +33,13 @@ export interface PredictResponse {
   end_to_end_ms: number;
 }
 
+export interface PredictVideoResponse extends PredictResponse {
+  filename: string;
+  npz_path: string;
+  extract: Record<string, unknown>;
+  meta: Record<string, unknown>;
+}
+
 export interface MetadataResponse {
   baseline_dir: string;
   checkpoint_exists: boolean;
@@ -75,6 +82,23 @@ export const apiClient = {
       method: "POST",
       body: JSON.stringify({ sequence, top_k: topK }),
     });
+  },
+
+  async postPredictVideo(file: File, topK = 5): Promise<PredictVideoResponse> {
+    const form = new FormData();
+    form.append("video", file, file.name);
+
+    const response = await fetch(`${BASE_URL}/model/predict-video?top_k=${topK}`, {
+      method: "POST",
+      body: form,
+    });
+
+    if (!response.ok) {
+      const body = await response.text().catch(() => "");
+      throw new Error(`API ${response.status}: ${body || response.statusText}`);
+    }
+
+    return response.json() as Promise<PredictVideoResponse>;
   },
 
   postBenchmark(runs = 30, warmup = 5): Promise<BenchmarkResponse> {
